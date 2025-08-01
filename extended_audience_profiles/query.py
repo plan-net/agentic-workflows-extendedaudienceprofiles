@@ -84,8 +84,7 @@ async def run_profile_generation(inputs: dict, tracer: Tracer):
     # Show progress
     await tracer.markdown(f"**Target Audience:** {audience_description}")
     
-    await tracer.markdown("🚀 **Phase 1: Orchestration**")
-    await tracer.markdown("🔄 Initializing orchestrator agent...")
+    await tracer.markdown("\n🚀 **Phase 1: Orchestration**")
     
     # Execute the profile generation directly (not in Ray remote)
     # This allows us to use the tracer directly
@@ -95,8 +94,6 @@ async def run_profile_generation(inputs: dict, tracer: Tracer):
         await tracer.markdown(f"❌ **Error:** {result['error']}")
         return dtypes.Markdown(body=f"## Error\n\n{result['error']}")
     
-    # Show completion in tracer
-    await tracer.markdown("✅ **All phases completed successfully!**")
     
     # Extract metadata
     metadata = result.get("metadata", {})

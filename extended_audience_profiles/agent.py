@@ -93,13 +93,11 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         # Create a new submission in Ray state
         submission_id, submission_ref = StateManager.create_submission(audience_description)
         logger.info(f"Created submission {submission_id}")
-        if tracer:
-            await tracer.markdown(f"🆔 Submission ID: `{submission_id}`")
         
         # Phase 1: Run orchestrator to submit jobs
         logger.info("Phase 1: Running orchestrator agent to submit jobs...")
         if tracer:
-            await tracer.markdown("🤖 Running orchestrator agent to analyze audience and submit research jobs...")
+            await tracer.markdown("🤖 Running orchestrator agent...")
         orchestrator_prompt = f"""
         Analyze this audience and submit research jobs to Masumi agents:
         
@@ -114,8 +112,6 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             orchestrator_prompt
         )
         
-        if tracer:
-            await tracer.markdown("📄 Orchestrator completed. Processing job submissions...")
         
         # Extract job IDs from orchestrator's tool calls
         submitted_jobs = []
@@ -178,8 +174,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                         submission_ref = StateManager.add_job(submission_ref, job)
                         submitted_jobs.append({
                             "job_id": job.job_id,
-                            "agent": job.agent_name,
-                            "research_focus": job.input_data.get('question', job.input_data.get('statement', 'Unknown'))
+                            "agent": job.agent_name
                         })
                     elif isinstance(result, dict) and not result.get('success'):
                         # Log failed submissions but continue processing
@@ -221,13 +216,13 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         if tracer:
             await tracer.markdown(f"\n✅ **Successfully submitted {len(submitted_jobs)} jobs to Masumi Network**")
             for job in submitted_jobs:
-                await tracer.markdown(f"  • {job['agent']}: {job['research_focus'][:60]}... [{job['job_id'][:8]}...]")
+                await tracer.markdown(f"  • {job['agent']} [{job['job_id'][:8]}...]")
         
         # Phase 2: Poll jobs in background
         logger.info("Phase 2: Starting background polling for job results...")
         if tracer:
-            await tracer.markdown("🔍 **Phase 2: Background Processing**")
-            await tracer.markdown("⏳ Polling Masumi Network for job results (this may take 5-20 minutes)...")
+            await tracer.markdown("\n🔍 **Phase 2: Background Processing**")
+            await tracer.markdown("⏳ Polling for results (5-20 minutes)...")
         
         # Import the async polling function
         from .background import _poll_masumi_jobs_async
@@ -243,15 +238,11 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         
         logger.info(f"All jobs complete. Successful: {results['completed_jobs']}, Failed: {results['failed_jobs']}")
         
-        if tracer:
-            await tracer.markdown(f"✅ **Jobs completed!** Success: {results['completed_jobs']}, Failed: {results['failed_jobs']}")
-            await tracer.markdown(f"⏱️ Total polling time: {results['total_duration']:.1f} seconds")
-        
         # Phase 3: Run consolidator to synthesize results
         logger.info("Phase 3: Running consolidator agent to synthesize results...")
         if tracer:
-            await tracer.markdown("🧪 **Phase 3: Synthesis**")
-            await tracer.markdown("🤖 Running consolidator agent to synthesize all research results...")
+            await tracer.markdown("\n🧪 **Phase 3: Synthesis**")
+            await tracer.markdown("🤖 Running consolidator agent...")
         
         # Prepare results for consolidator
         research_results = "\n\n".join([
@@ -278,7 +269,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         )
         
         if tracer:
-            await tracer.markdown("🎆 Consolidator completed! Final profile ready.")
+            await tracer.markdown("✅ Profile synthesis complete")
+            await tracer.markdown("\n✨ **Extended audience profile ready!**")
         
         # Prepare final response
         return {

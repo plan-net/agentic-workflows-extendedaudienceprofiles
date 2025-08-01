@@ -58,8 +58,6 @@ async def _poll_masumi_jobs_async(submission_ref: ray.ObjectRef, tracer=None) ->
         
         if not pending_jobs:
             logger.info(f"All jobs complete for submission {submission.submission_id}")
-            if tracer:
-                await tracer.markdown("✅ All jobs completed!")
             break
         
         # Check timeout
@@ -93,8 +91,7 @@ async def _poll_masumi_jobs_async(submission_ref: ray.ObjectRef, tracer=None) ->
                 # Show the exact status in tracer - single line
                 if tracer:
                     job_status = status_result.get('status', 'unknown')
-                    job_result_preview = str(status_result.get('result', ''))[:50] + "..." if status_result.get('result') else ''
-                    await tracer.markdown(f"📊 Job {job.job_id[:8]}... status: **{job_status}** {job_result_preview}")
+                    await tracer.markdown(f"📊 Job {job.job_id[:8]}... status: **{job_status}**")
                 
                 if status_result['status'] == 'completed':
                     # Job completed successfully
@@ -108,10 +105,6 @@ async def _poll_masumi_jobs_async(submission_ref: ray.ObjectRef, tracer=None) ->
                     logger.info(f"Job {job.job_id} completed successfully")
                     logger.info(f"Result preview: {result_content[:200]}..." if len(result_content) > 200 else f"Result: {result_content}")
                     
-                    if tracer:
-                        result_preview = str(result_content)[:100] + "..." if len(str(result_content)) > 100 else str(result_content)
-                        await tracer.markdown(f"✅ Job {job.job_id[:8]}... completed: {result_preview}")
-                    
                 elif status_result['status'] == 'failed':
                     # Job failed
                     error_msg = status_result.get('result', status_result.get('message', 'Unknown error'))
@@ -123,18 +116,17 @@ async def _poll_masumi_jobs_async(submission_ref: ray.ObjectRef, tracer=None) ->
                     )
                     logger.error(f"Job {job.job_id} failed: {error_msg}")
                     
-                    if tracer:
-                        await tracer.markdown(f"❌ Job {job.job_id[:8]}... failed: {error_msg[:100]}...")
-                    
             except Exception as e:
                 logger.error(f"Error polling job {job.job_id}: {str(e)}")
                 # Don't mark as failed immediately, will retry on next poll
         
         # Show status update periodically
         if tracer and len(pending_jobs) > 0:
+            submission = StateManager.get_submission(submission_ref)
             completed = len([j for j in submission.jobs if j.status == "completed"])
+            failed = len([j for j in submission.jobs if j.status == "failed"])
             total = len(submission.jobs)
-            await tracer.markdown(f"⏳ Progress: {completed}/{total} jobs completed, {len(pending_jobs)} still running...")
+            await tracer.markdown(f"⏳ Progress: {completed + failed}/{total} completed")
         
         # Wait before next poll with exponential backoff
         logger.debug(f"Waiting {poll_interval:.0f} seconds before next poll...")
@@ -143,9 +135,38 @@ async def _poll_masumi_jobs_async(submission_ref: ray.ObjectRef, tracer=None) ->
     
     # Return final submission reference
     final_submission = StateManager.get_submission(submission_ref)
+    completed_jobs = final_submission.get_completed_jobs()
+    failed_jobs = final_submission.get_failed_jobs()
+    
     logger.info(f"Polling complete. Total jobs: {len(final_submission.jobs)}, "
-                f"Completed: {len(final_submission.get_completed_jobs())}, "
-                f"Failed: {len(final_submission.get_failed_jobs())}")
+                f"Completed: {len(completed_jobs)}, "
+                f"Failed: {len(failed_jobs)}")
+    
+    # Show final results summary
+    if tracer:
+        elapsed_minutes = (asyncio.get_event_loop().time() - start_time) / 60.0
+        await tracer.markdown(f"✅ Polling complete ({elapsed_minutes:.1f} minutes)")
+        
+        if failed_jobs:
+            # Summarize failures
+            failure_reasons = {}
+            for job in failed_jobs:
+                reason = "Unknown error"
+                if job.error:
+                    if "429" in job.error or "rate limit" in job.error.lower():
+                        reason = "API rate limit"
+                    elif "timeout" in job.error.lower():
+                        reason = "Timeout"
+                    elif "budget" in job.error.lower():
+                        reason = "Budget exceeded"
+                    else:
+                        reason = "Error"
+                failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
+            
+            failure_summary = ", ".join([f"{count} {reason}" for reason, count in failure_reasons.items()])
+            await tracer.markdown(f"📋 Results: {len(completed_jobs)} successful, {len(failed_jobs)} failed ({failure_summary})")
+        else:
+            await tracer.markdown(f"📋 Results: {len(completed_jobs)} successful")
     
     return submission_ref
 
