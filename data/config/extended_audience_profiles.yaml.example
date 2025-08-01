@@ -1,0 +1,14 @@
+# ./data/config/extended_audience_profiles.yaml
+name: extended_audience_profiles
+route_prefix: /extended_audience_profiles
+import_path: extended_audience_profiles.query:fast_app
+runtime_env: 
+  pip:
+  - openai
+  env_vars:
+    OTEL_SDK_DISABLED: "true"
+    OPENAI_API_KEY: <-- your-openai-api-key -->
+    MASUMI_REGISTRY_SERVICE_URL: <-- your-registry-service-url -->
+    MASUMI_REGISTRY_API_KEY: <-- your-registry-api-key -->
+    MASUMI_PAYMENT_SERVICE_URL: <-- your-payment-service-url -->
+    MASUMI_PAYMENT_API_KEY: <-- your-payment-api-key -->

@@ -1,0 +1,19 @@
+# Budget Configuration
+budget:
+  total_budget: 50.0  # Total budget across all agents
+  network: "Preprod"  # Network for Masumi transactions (Preprod/Mainnet)
+  
+# Available agents configuration
+agents:
+
+  - name: "audience-insights-gwi"
+    endpoint: "http://138.68.88.241:8000/Audience%20Insights%20GWI"  
+    description: "Global Web Index audience insights"
+    max_total_spend: 20.0  # Optional: can call this agent until 100.0 is spent
+    enabled: true
+    
+  - name: "advanced-web-research"
+    endpoint: "http://138.68.88.241:8000/Advanced%20Web%20Research"
+    description: "Advanced web research agent for comprehensive web research"
+    # No max_total_spend means only limited by total_budget
+    enabled: true

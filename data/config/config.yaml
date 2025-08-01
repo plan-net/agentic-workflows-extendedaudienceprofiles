@@ -1,0 +1,13 @@
+# ./data/config/config.yaml
+proxy_location: EveryNode
+http_options:
+  host: 0.0.0.0
+  port: 8001
+grpc_options:
+  port: 9001
+  grpc_servicer_functions: []
+logging_config:
+  encoding: TEXT
+  log_level: DEBUG
+  logs_dir: null
+  enable_access_log: true

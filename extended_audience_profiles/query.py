@@ -1,0 +1,121 @@
+import ray
+import fastapi
+import asyncio
+from kodosumi.core import Launch, ServeAPI, InputsError, Tracer
+from kodosumi.core import forms as F
+from kodosumi import dtypes
+from ray import serve
+from .agent import generate_audience_profile
+
+# Create ServeAPI instance
+app = ServeAPI()
+
+
+# Form model for input validation
+profile_model = F.Model(
+    F.Markdown("""
+    # Extended Audience Profiles
+    Generate comprehensive audience profiles using advanced web research capabilities.
+    """),
+    F.Break(),
+    F.InputArea(
+        label="Audience Description", 
+        name="audience_description",
+        placeholder="Describe your target audience (e.g., 'Millennials interested in sustainable fashion')",
+        required=True
+    ),
+    F.Submit("Generate Profile"),
+    F.Cancel("Cancel")
+)
+
+
+
+
+@app.enter(
+    path="/",
+    model=profile_model,
+    summary="Extended Audience Profiles",
+    description="Generate comprehensive audience profiles using Masumi Network agents",
+    tags=["AI", "Masumi", "Audience Research"],
+    version="1.0.0"
+)
+async def enter(request: fastapi.Request, inputs: dict):
+    """
+    Endpoint function for handling audience profile generation requests.
+    """
+    # Parse and cleanse inputs
+    audience_description = inputs.get("audience_description", "").strip()
+    
+    # Validate inputs
+    error = InputsError()
+    if not audience_description:
+        error.add(audience_description="Please enter an audience description.")
+    if error.has_errors():
+        raise error
+    
+    # Launch execution
+    return Launch(
+        request,
+        run_profile_generation,
+        inputs={
+            "audience_description": audience_description
+        }
+    )
+
+
+@serve.deployment
+@serve.ingress(app)
+class ExtendedAudienceProfiles: 
+    pass
+
+fast_app = ExtendedAudienceProfiles.bind()
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "extended-audience-profiles"}
+
+
+async def run_profile_generation(inputs: dict, tracer: Tracer):
+    """Execute the profile generation and stream results via tracer."""
+    audience_description = inputs.get("audience_description", "")
+    
+    # Show progress
+    await tracer.markdown(f"**Target Audience:** {audience_description}")
+    
+    await tracer.markdown("🚀 **Phase 1: Orchestration**")
+    await tracer.markdown("🔄 Initializing orchestrator agent...")
+    
+    # Execute the profile generation directly (not in Ray remote)
+    # This allows us to use the tracer directly
+    result = await generate_audience_profile(audience_description, tracer)
+    
+    if not result["success"]:
+        await tracer.markdown(f"❌ **Error:** {result['error']}")
+        return dtypes.Markdown(body=f"## Error\n\n{result['error']}")
+    
+    # Show completion in tracer
+    await tracer.markdown("✅ **All phases completed successfully!**")
+    
+    # Extract metadata
+    metadata = result.get("metadata", {})
+    
+    # Format result for admin panel
+    formatted_result = f"## Extended Audience Profile\n\n"
+    formatted_result += f"**Target Audience:** {audience_description}\n\n"
+    formatted_result += "---\n\n"
+    formatted_result += result["profile"]
+    
+    # Add metadata footer
+    formatted_result += "\n\n---\n"
+    formatted_result += f"*Generated via Masumi Network*\n"
+    formatted_result += f"- Submission ID: `{metadata.get('submission_id', 'N/A')}`\n"
+    
+    if metadata:
+        formatted_result += f"- Total Jobs: {metadata.get('total_jobs', 'N/A')}\n"
+        formatted_result += f"- Completed: {metadata.get('completed_jobs', 'N/A')}\n"
+        formatted_result += f"- Failed: {metadata.get('failed_jobs', 'N/A')}\n"
+        formatted_result += f"- Duration: {metadata.get('total_duration', 'N/A'):.1f}s\n"
+    
+    return dtypes.Markdown(body=formatted_result)
