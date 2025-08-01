@@ -2,15 +2,13 @@
 Business logic for Extended Audience Profiles using OpenAI Agents and Masumi Network
 """
 import asyncio
-import ray
 import json
-import ast
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
 from .tools import list_available_agents, get_agent_input_schema, execute_agent_job
 from .state import StateManager, Job
-from .background import poll_masumi_jobs
-import logging
+from .background import _poll_masumi_jobs_async
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +71,96 @@ consolidator_agent = Agent(
 )
 
 
+
+def _find_agent_name_from_previous_calls(items: List[Any], current_index: int) -> Optional[str]:
+    """Look backwards to find agent name from execute_agent_job calls."""
+    for j in range(current_index - 1, -1, -1):
+        item = items[j]
+        if (type(item).__name__ == 'ToolCallItem' and 
+            hasattr(item, 'function') and 
+            hasattr(item.function, 'name') and 
+            item.function.name == 'execute_agent_job' and
+            hasattr(item.function, 'arguments')):
+            try:
+                args = json.loads(item.function.arguments)
+                return args.get('agent_name')
+            except:
+                pass
+    return None
+
+
+def _format_research_results(results: Dict[str, Any]) -> str:
+    """Format research results for consolidator agent."""
+    formatted_results = []
+    for job_id, data in results.items():
+        agent_name = data.get('agent_name', 'Unknown')
+        question = data.get('input_data', {}).get('question', 'N/A')
+        result = data.get('result', 'No result')
+        
+        formatted_results.append(
+            f"Research from {agent_name}:\n"
+            f"Question: {question}\n"
+            f"Result: {result}"
+        )
+    
+    return "\n\n".join(formatted_results)
+
+
+async def _handle_job_submission_error(result: Dict[str, Any], items: List[Any], index: int, tracer) -> None:
+    """Handle errors from job submission attempts."""
+    agent_name = result.get('agent_name') or _find_agent_name_from_previous_calls(
+        items, index
+    ) or 'Unknown agent'
+    
+    error_msg = result.get('error', 'Unknown error')
+    error_type = result.get('error_type', 'unknown')
+    
+    logger.error(f"Failed to submit job to {agent_name}: {error_msg} (type: {error_type})")
+    
+    if tracer:
+        # Special handling for known error types
+        if 'ask-the-crowd' in str(agent_name) and 'array for option field' in error_msg:
+            await tracer.markdown(f"⚠️ Skipped {agent_name}: requires array format for options")
+        else:
+            await tracer.markdown(f"❌ Failed to submit to {agent_name}: {error_msg[:200]}... (type: {error_type})")
+
+
+def _create_error_response(audience_description: str, error: str) -> Dict[str, Any]:
+    """Create a standardized error response."""
+    return {
+        "audience_description": audience_description,
+        "profile": None,
+        "success": False,
+        "error": error
+    }
+
+
+def _create_success_response(
+    audience_description: str,
+    profile: str,
+    submission_id: str,
+    results: Dict[str, Any],
+    submitted_jobs: List[Dict[str, str]]
+) -> Dict[str, Any]:
+    """Create a standardized success response with metadata."""
+    return {
+        "audience_description": audience_description,
+        "profile": profile,
+        "metadata": {
+            "submission_id": submission_id,
+            "total_jobs": results['total_jobs'],
+            "completed_jobs": results['completed_jobs'],
+            "failed_jobs": results['failed_jobs'],
+            "total_duration": results['total_duration'],
+            "jobs_submitted": submitted_jobs,
+            "orchestrator_agent": orchestrator_agent.name,
+            "consolidator_agent": consolidator_agent.name
+        },
+        "success": True,
+        "error": None
+    }
+
+
 async def generate_audience_profile(audience_description: str, tracer=None) -> Dict[str, Any]:
     """
     Generate an extended audience profile using fan-out/fan-in agent orchestration.
@@ -112,101 +200,38 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             orchestrator_prompt
         )
         
-        
         # Extract job IDs from orchestrator's tool calls
         submitted_jobs = []
         
-        
-        # Look through new_items for tool call outputs
+        # Process tool call outputs from orchestrator
         for i, item in enumerate(orchestrator_result.new_items):
-            item_type = type(item).__name__
+            # Skip if not a tool call output
+            if type(item).__name__ != 'ToolCallOutputItem':
+                continue
             
-            # Check if this is a tool call output by class name
-            if item_type == 'ToolCallOutputItem':
-                # The raw_item contains the actual tool output
-                if hasattr(item, 'raw_item') and isinstance(item.raw_item, dict):
-                    raw_item = item.raw_item
-                    # The actual result is in the 'output' field
-                    result = raw_item.get('output', {})
-                    
-                    # If result is a string that looks like a dict, try to parse it
-                    if isinstance(result, str) and result.strip().startswith('{'):
-                        try:
-                            # First try json.loads
-                            result = json.loads(result)
-                        except json.JSONDecodeError:
-                            try:
-                                # If that fails, try ast.literal_eval for Python dict format
-                                result = ast.literal_eval(result)
-                            except:
-                                # If both fail, keep as string
-                                pass
-                    
-                    if isinstance(result, dict) and result.get('success') and result.get('job_id'):
-                        # Get the input data from the tool call
-                        input_data = {}
-                        agent_name = result.get('agent_name', 'Unknown')
-                        
-                        # Try to find the corresponding tool call input
-                        # Look for the ToolCallItem that preceded this output
-                        for j in range(i-1, -1, -1):
-                            prev_item = orchestrator_result.new_items[j]
-                            if type(prev_item).__name__ == 'ToolCallItem':
-                                # Check if this is an execute_agent_job call
-                                if hasattr(prev_item, 'function') and hasattr(prev_item.function, 'name'):
-                                    if prev_item.function.name == 'execute_agent_job':
-                                        # Parse the arguments to get input_data
-                                        if hasattr(prev_item.function, 'arguments'):
-                                            try:
-                                                args = json.loads(prev_item.function.arguments)
-                                                if args.get('agent_name') == agent_name:
-                                                    input_data = args.get('input_data', {})
-                                                    break
-                                            except:
-                                                pass
-                        
-                    
-                        job = Job(
-                            job_id=result['job_id'],
-                            agent_name=agent_name,
-                            input_data=input_data
-                        )
-                        submission_ref = StateManager.add_job(submission_ref, job)
-                        submitted_jobs.append({
-                            "job_id": job.job_id,
-                            "agent": job.agent_name
-                        })
-                    elif isinstance(result, dict) and not result.get('success'):
-                        # Log failed submissions but continue processing
-                        agent_name = result.get('agent_name', None)
-                        
-                        # If agent_name not in result, try to get it from the tool call
-                        if not agent_name:
-                            for j in range(i-1, -1, -1):
-                                prev_item = orchestrator_result.new_items[j]
-                                if type(prev_item).__name__ == 'ToolCallItem':
-                                    if hasattr(prev_item, 'function') and hasattr(prev_item.function, 'name'):
-                                        if prev_item.function.name == 'execute_agent_job':
-                                            if hasattr(prev_item.function, 'arguments'):
-                                                try:
-                                                    args = json.loads(prev_item.function.arguments)
-                                                    agent_name = args.get('agent_name', 'Unknown agent')
-                                                    break
-                                                except:
-                                                    pass
-                        
-                        error_msg = result.get('error', 'Unknown error')
-                        error_type = result.get('error_type', 'unknown')
-                        
-                        # Log the full error for debugging
-                        logger.error(f"Failed to submit job to {agent_name}: {error_msg} (type: {error_type})")
-                        
-                        if tracer:
-                            # Only show a brief error message
-                            if 'ask-the-crowd' in str(agent_name) and 'array for option field' in error_msg:
-                                await tracer.markdown(f"⚠️ Skipped {agent_name}: requires array format for options")
-                            else:
-                                await tracer.markdown(f"❌ Failed to submit to {agent_name}: {error_msg[:200]}... (type: {error_type})")
+            # Get the actual tool output directly from item.output
+            result = item.output
+            
+            # Skip if output is not a dictionary
+            if not isinstance(result, dict):
+                continue
+            
+            # Handle successful job submission
+            if result.get('success') and result.get('job_id'):
+                job = Job(
+                    job_id=result['job_id'],
+                    agent_name=result.get('agent_name', 'Unknown'),
+                    input_data={}  # We don't need to track input data for display
+                )
+                submission_ref = StateManager.add_job(submission_ref, job)
+                submitted_jobs.append({
+                    "job_id": job.job_id,
+                    "agent": job.agent_name
+                })
+            
+            # Handle failed job submission
+            elif not result.get('success'):
+                await _handle_job_submission_error(result, orchestrator_result.new_items, i, tracer)
         
         if len(submitted_jobs) < 2:
             raise Exception(f"Orchestrator needs at least 2 successful job submissions, but only got {len(submitted_jobs)}")
@@ -223,9 +248,6 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         if tracer:
             await tracer.markdown("\n🔍 **Phase 2: Background Processing**")
             await tracer.markdown("⏳ Polling for results (5-20 minutes)...")
-        
-        # Import the async polling function
-        from .background import _poll_masumi_jobs_async
         
         # Run the polling directly in this async context so we can use the tracer
         final_submission_ref = await _poll_masumi_jobs_async(submission_ref, tracer)
@@ -245,12 +267,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("🤖 Running consolidator agent...")
         
         # Prepare results for consolidator
-        research_results = "\n\n".join([
-            f"Research from {data['agent_name']}:\n"
-            f"Question: {data['input_data'].get('question', 'N/A')}\n"
-            f"Result: {data['result']}"
-            for job_id, data in results['results'].items()
-        ])
+        research_results = _format_research_results(results['results'])
         
         consolidator_prompt = f"""
         Create a comprehensive audience profile based on these research results:
@@ -273,31 +290,17 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("\n✨ **Extended audience profile ready!**")
         
         # Prepare final response
-        return {
-            "audience_description": audience_description,
-            "profile": consolidator_result.final_output,
-            "metadata": {
-                "submission_id": submission_id,
-                "total_jobs": results['total_jobs'],
-                "completed_jobs": results['completed_jobs'],
-                "failed_jobs": results['failed_jobs'],
-                "total_duration": results['total_duration'],
-                "jobs_submitted": submitted_jobs,
-                "orchestrator_agent": orchestrator_agent.name,
-                "consolidator_agent": consolidator_agent.name
-            },
-            "success": True,
-            "error": None
-        }
+        return _create_success_response(
+            audience_description=audience_description,
+            profile=consolidator_result.final_output,
+            submission_id=submission_id,
+            results=results,
+            submitted_jobs=submitted_jobs
+        )
         
     except Exception as e:
         logger.error(f"Error generating audience profile: {str(e)}")
-        return {
-            "audience_description": audience_description,
-            "profile": None,
-            "success": False,
-            "error": str(e)
-        }
+        return _create_error_response(audience_description, str(e))
 
 
 def generate_audience_profile_sync(audience_description: str) -> Dict[str, Any]:
