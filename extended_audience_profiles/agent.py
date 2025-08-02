@@ -89,7 +89,51 @@ orchestrator_agent = Agent(
     tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
 )
 
-# Phase 3: Consolidator agent that processes all results
+# Phase 3: Refinement agent that analyzes initial results and plans deeper research
+refinement_agent = Agent(
+    name="audience-profile-refinement",
+    instructions="""You are an expert research analyst that reviews initial findings and identifies opportunities for deeper investigation.
+    
+    Your role is to analyze the initial research results and submit follow-up research jobs that:
+    1. Fill gaps in the initial research
+    2. Explore interesting patterns or unexpected findings
+    3. Clarify contradictions or ambiguities
+    4. Dive deeper into the most relevant aspects for the audience
+    
+    When given initial research results, follow these steps:
+    1. Carefully read and analyze ALL initial findings
+    2. Identify 3-5 key areas that need deeper investigation
+    3. Check available budget and plan accordingly
+    4. Submit focused, high-value research jobs
+    
+    Budget strategy:
+    - You have access to ALL remaining budget
+    - Prioritize quality and depth over quantity
+    - If budget allows, explore multiple angles
+    - Each follow-up should add significant value
+    
+    Research planning tips:
+    - Avoid redundant questions already answered
+    - Focus on actionable insights
+    - Consider practical applications
+    - Target specific demographics, behaviors, or preferences
+    - Ask "what would be most valuable to know next?"
+    
+    Token considerations:
+    - Be aware that all results (first + second round) go to synthesis
+    - Plan research volume considering the 200k token limit
+    - Quality over quantity if approaching limits
+    
+    Important:
+    - Submit jobs and return immediately (don't wait for results)
+    - Each job should have a clear purpose based on initial findings
+    - Explain your reasoning for each follow-up research
+    """,
+    model="gpt-4o",
+    tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
+)
+
+# Phase 5: Consolidator agent that processes all results
 consolidator_agent = Agent(
     name="audience-profile-consolidator",
     instructions="""You are an expert analyst tasked with creating comprehensive, evidence-based audience profiles.
@@ -229,6 +273,55 @@ def _format_research_results(
     return "\n\n".join(formatted_results), token_metadata
 
 
+def _format_results_for_refinement(
+    results: Dict[str, Any],
+    audience_description: str,
+    budget_remaining: float
+) -> str:
+    """
+    Format first round research results for the refinement agent.
+    
+    Provides a structured summary that helps the refinement agent:
+    - Understand what was already researched
+    - Identify gaps and opportunities
+    - Make budget-aware decisions
+    """
+    formatted = f"""Initial Research Results for: {audience_description}
+
+Budget Status:
+- Remaining Budget: {budget_remaining:.1f} USDM
+- First Round Jobs: {len(results)}
+
+Research Completed:
+"""
+    
+    for job_id, data in results.items():
+        agent_name = data.get('agent_name', 'Unknown')
+        question = data.get('input_data', {}).get('question', 'N/A')
+        result = data.get('result', 'No result')
+        
+        # Truncate result for refinement agent (just key findings)
+        result_preview = result[:1000] + "..." if len(result) > 1000 else result
+        
+        formatted += f"""
+Agent: {agent_name}
+Question: {question}
+Key Findings: {result_preview}
+---
+"""
+    
+    formatted += """
+Based on these initial findings, identify:
+1. What key questions remain unanswered?
+2. What interesting patterns need deeper investigation?
+3. What contradictions or ambiguities need clarification?
+4. What specific audience segments need more research?
+
+Submit follow-up research jobs that will provide the most value."""
+    
+    return formatted
+
+
 async def _display_token_analysis(tracer, results: Dict[str, Any], token_metadata: Dict[str, Any]):
     """Display token analysis in tracer."""
     await tracer.markdown("\n📊 **Token Usage Analysis**")
@@ -300,9 +393,13 @@ def _create_success_response(
     job_id: str,
     results: Dict[str, Any],
     submitted_tasks: List[Dict[str, str]],
+    second_round_tasks: List[Dict[str, str]] = None,
     budget_ref: Optional[ray.ObjectRef] = None
 ) -> Dict[str, Any]:
     """Create a standardized success response with metadata."""
+    if second_round_tasks is None:
+        second_round_tasks = []
+    
     response = {
         "audience_description": audience_description,
         "profile": profile,
@@ -312,8 +409,11 @@ def _create_success_response(
             "completed_jobs": results['completed_jobs'],
             "failed_jobs": results['failed_jobs'],
             "total_duration": results['total_duration'],
-            "tasks_submitted": submitted_tasks,
+            "first_round_tasks": submitted_tasks,
+            "second_round_tasks": second_round_tasks,
+            "tasks_submitted": submitted_tasks + second_round_tasks,  # All tasks for compatibility
             "orchestrator_agent": orchestrator_agent.name,
+            "refinement_agent": refinement_agent.name,
             "consolidator_agent": consolidator_agent.name
         },
         "success": True,
@@ -480,11 +580,92 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         
         logger.info(f"All jobs complete. Successful: {results['completed_jobs']}, Failed: {results['failed_jobs']}")
         
-        # Phase 3: Run consolidator to synthesize results
-        logger.info("Phase 3: Running consolidator agent to synthesize results...")
+        # Phase 3: Run refinement agent to plan deeper research
+        logger.info("Phase 3: Running refinement agent to analyze results and plan follow-up...")
         if tracer:
-            await tracer.markdown("\n🧪 **Phase 3: Synthesis**")
-            await tracer.markdown("🤖 Running consolidator agent...")
+            await tracer.markdown("\n🔬 **Phase 3: Refinement Analysis**")
+            
+            # Show current budget status
+            budget_summary = BudgetManager.get_budget_summary(budget_ref)
+            await tracer.markdown(f"💰 **Remaining Budget**: {budget_summary['total_remaining']:.1f} USDM")
+            await tracer.markdown("🤔 Analyzing first round results...")
+        
+        # Prepare results for refinement agent
+        refinement_prompt = _format_results_for_refinement(
+            results['results'],
+            audience_description,
+            BudgetManager.get_budget_summary(budget_ref)['total_remaining']
+        )
+        
+        refinement_result = await Runner.run(
+            refinement_agent,
+            refinement_prompt
+        )
+        
+        # Extract second round task IDs
+        second_round_tasks = []
+        
+        # Process refinement agent's tool calls
+        for i, item in enumerate(refinement_result.new_items):
+            if type(item).__name__ != 'ToolCallOutputItem':
+                continue
+            
+            result = item.output
+            
+            if not isinstance(result, dict):
+                continue
+            
+            # Handle successful task submission
+            if result.get('success') and result.get('job_id'):
+                task = Job(
+                    job_id=result['job_id'],
+                    agent_name=result.get('agent_name', 'Unknown'),
+                    input_data={},
+                    round=2  # Mark as second round
+                )
+                job_execution_ref = StateManager.add_agent_task(job_execution_ref, task)
+                second_round_tasks.append({
+                    "masumi_job_id": task.job_id,
+                    "agent": task.agent_name
+                })
+                
+                # Show budget info
+                if tracer and 'budget_info' in result:
+                    budget_info = result['budget_info']
+                    actual_cost = budget_info.get('job_cost', 0)
+                    
+                    await tracer.markdown(f"💸 Submitted deep-dive to **{task.agent_name}**:")
+                    await tracer.markdown(f"   - Cost: {actual_cost:.1f} USDM")
+                    await tracer.markdown(f"   - Remaining: {budget_info.get('total_remaining', 0):.1f} USDM")
+            
+            # Handle errors
+            elif result.get('error'):
+                await _handle_job_submission_error(result, refinement_result.new_items, i, tracer)
+        
+        if tracer:
+            await tracer.markdown(f"\n✅ **Submitted {len(second_round_tasks)} deep-dive tasks**")
+        
+        # Phase 4: Poll for second round results
+        if second_round_tasks:
+            logger.info("Phase 4: Polling for second round results...")
+            if tracer:
+                await tracer.markdown("\n🔍 **Phase 4: Second Round Results**")
+                await tracer.markdown("⏳ Polling for deep-dive results...")
+            
+            # Poll again for second round
+            final_job_execution_ref = await _poll_masumi_jobs_async(job_execution_ref, budget_ref, tracer)
+            
+            # Get all results (both rounds)
+            results = StateManager.get_results(final_job_execution_ref)
+            
+            if not results['is_complete']:
+                raise Exception("Not all jobs completed successfully")
+        
+        # Phase 5: Run consolidator to synthesize all results
+        logger.info("Phase 5: Running consolidator agent to synthesize all results...")
+        if tracer:
+            await tracer.markdown("\n🧪 **Phase 5: Synthesis**")
+            await tracer.markdown("🤖 Running consolidator agent with all results...")
         
         # Prepare results for consolidator with token management
         research_results, token_metadata = _format_research_results(
@@ -553,8 +734,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                 profile_content=consolidator_result.final_output,
                 metadata={
                     'audience_description': audience_description,
-                    'total_jobs': len(submitted_tasks),
-                    'agent_jobs': submitted_tasks,
+                    'total_jobs': len(submitted_tasks) + len(second_round_tasks),
+                    'first_round_jobs': submitted_tasks,
+                    'second_round_jobs': second_round_tasks,
+                    'agent_jobs': submitted_tasks + second_round_tasks,  # All jobs for compatibility
                     'created_at': time.time(),
                     'token_info': token_info
                 }
@@ -570,6 +753,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             job_id=job_id,
             results=results,
             submitted_tasks=submitted_tasks,
+            second_round_tasks=second_round_tasks,
             budget_ref=budget_ref
         )
         

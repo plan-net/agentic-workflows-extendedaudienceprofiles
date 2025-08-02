@@ -116,7 +116,8 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
                             'input_data': task.input_data,
                             'started_at': task.started_at,
                             'completed_at': time.time(),
-                            'duration': time.time() - task.started_at if task.started_at else None
+                            'duration': time.time() - task.started_at if task.started_at else None,
+                            'round': task.round  # Track which round this task belongs to
                         }
                         
                         # Add any hash fields found in the response

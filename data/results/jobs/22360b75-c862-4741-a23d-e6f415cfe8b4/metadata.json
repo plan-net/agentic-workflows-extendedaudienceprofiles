@@ -1,0 +1,19 @@
+{
+  "job_id": "22360b75-c862-4741-a23d-e6f415cfe8b4",
+  "audience_description": "millenials and their expectations towards insurance products",
+  "created_at": 1754117858.139014,
+  "status": "started",
+  "last_updated": "2025-08-02T09:05:09.336848",
+  "completed_agents": [
+    {
+      "masumi_job_id": "37efa40a-53d5-458d-9efb-07391d66a1fd",
+      "agent_name": "audience-insights-gwi",
+      "completed_at": "2025-08-02T09:05:09.261461"
+    },
+    {
+      "masumi_job_id": "9467e0d7-fcc8-4362-93b7-d3f7e8f955a9",
+      "agent_name": "advanced-web-research",
+      "completed_at": "2025-08-02T09:05:09.336536"
+    }
+  ]
+}

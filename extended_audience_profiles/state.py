@@ -22,6 +22,7 @@ class Job:
     error: Optional[str] = None
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
+    round: int = 1  # Track which round this job belongs to (1 = first, 2 = refinement)
 
 
 @dataclass
@@ -44,6 +45,15 @@ class JobExecution:
     def get_failed_tasks(self) -> List[Job]:
         """Get all failed agent tasks"""
         return [task for task in self.agent_tasks if task.status == "failed"]
+    
+    def get_tasks_by_round(self, round_num: int) -> List[Job]:
+        """Get all tasks from a specific round"""
+        return [task for task in self.agent_tasks if task.round == round_num]
+    
+    def get_completed_tasks_by_round(self, round_num: int) -> List[Job]:
+        """Get completed tasks from a specific round"""
+        return [task for task in self.agent_tasks 
+                if task.round == round_num and task.status == "completed"]
 
 
 class StateManager:
