@@ -1,24 +1,42 @@
 # Extended Audience Profiles
 
-A kodosumi-based AI service for generating extended audience profiles with citations using Exa.ai's web search capabilities.
+An advanced AI-powered audience research system that leverages the Masumi Network's Agent-2-Agent Protocol to generate comprehensive, evidence-based audience profiles through multi-agent orchestration.
 
-> **Compatibility**: Optimized for kodosumi v0.9.3
+> **Compatibility**: Optimized for kodosumi v0.9.3 and Masumi Network
 
-## Features
+## 🌟 Key Features
 
-- **Direct Answers**: Get specific answers to factual questions (e.g., "What was Deutsche Bahn's revenue in 2024?" → "26.2 Billion Euro")
-- **Detailed Summaries**: Comprehensive responses for open-ended questions (e.g., "What are Millennials expecting from insurance products?")
-- **Source Citations**: All answers include references to original sources
-- **Markdown Format**: Clean, formatted responses ready for display
+### Multi-Agent Research Orchestration
+- **5-Phase Workflow**: Intelligent research planning → Initial data collection → Refinement analysis → Deep-dive research → Comprehensive synthesis
+- **Adaptive Research**: Automatically identifies gaps and opportunities for deeper investigation
+- **Budget-Aware**: Smart allocation of research budget across multiple agents
+- **Token Management**: Automatic context window management for o3-mini (200k tokens)
 
-## Requirements
+### Advanced Capabilities
+- **Distributed Agent Network**: Access to specialized Masumi Network agents:
+  - `advanced-web-research`: Deep web search and analysis
+  - `audience-insights-gwi`: Global Web Index data insights
+  - `ask-the-crowd`: Crowd-sourced opinions and surveys
+- **Evidence-Based Profiles**: Every insight includes source citations
+- **Smart Truncation**: Intelligent content management when approaching token limits
+- **Real-Time Progress Tracking**: Detailed UI feedback through Kodosumi tracer
+- **Persistent Storage**: All research results saved for debugging and analysis
 
-- Python 3.12+ (managed with pyenv recommended)
+### Budget Management
+- **USDM Currency**: All transactions in USD-pegged stablecoin
+- **Per-Agent Limits**: Configurable spending caps per agent
+- **Dynamic Pricing**: Adjusts to actual vs expected costs
+- **Cost Transparency**: Real-time budget tracking and reporting
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Python 3.12+ (pyenv recommended)
 - kodosumi v0.9.3
 - Ray cluster
-- Exa.ai API key
+- Masumi Network API credentials
 
-## Quick Start
+### Installation
 
 1. **Set up Python environment**:
    ```bash
@@ -27,153 +45,195 @@ A kodosumi-based AI service for generating extended audience profiles with citat
    pip install -e .
    ```
 
-2. **Set your Exa.ai API key**:
+2. **Configure Masumi Network**:
    ```bash
-   echo "EXA_API_KEY=your_api_key_here" > .env
+   # Copy and configure Masumi settings
+   cp config/masumi.yaml.example config/masumi.yaml
+   # Edit config/masumi.yaml with your Masumi API credentials
    ```
 
-3. **Configure kodosumi deployment** (copy and update with your API key):
+3. **Set environment variables**:
    ```bash
-   cp data/config/extended_audience_profiles.yaml.example data/config/extended_audience_profiles.yaml
-   # Edit data/config/extended_audience_profiles.yaml and replace <-- your-exa-api-key --> with your actual key
+   echo "PAYMENT_SERVICE_URL=your_masumi_payment_url" >> .env
+   echo "PAYMENT_API_KEY=your_masumi_api_key" >> .env
    ```
 
-4. **Start Ray and deploy the service**:
+4. **Start the service**:
    ```bash
-   source .venv/bin/activate
-   ray start --head --disable-usage-stats
-   koco deploy -r
-   koco spool &  # REQUIRED: Starts the execution spooler
-   koco serve --register http://localhost:8001/-/routes
+   just start  # Starts Ray, deploys service, launches UI
    ```
 
 5. **Access the admin panel**:
-   Open `http://localhost:3370` in your browser to access the kodosumi admin interface.
+   Open `http://localhost:3370` in your browser
 
-6. **Test the service**:
-   ```bash
-   source .venv/bin/activate
-   pytest tests/ -m "not integration"  # Run unit tests
-   ```
+## 📊 How It Works
 
-The service will be deployed at `http://localhost:8001/extended_audience_profiles`
+### 5-Phase Research Workflow
 
-## Usage
+1. **Phase 1: Orchestration**
+   - Analyzes audience description
+   - Plans 2-3 initial research angles
+   - Submits jobs to specialized agents
+   - Budget-aware job distribution
 
-### Via Kodosumi Admin Panel
-Access the beautiful web interface at `http://localhost:3370` after running `just start`.
+2. **Phase 2: Initial Data Collection**
+   - Polls Masumi Network for results
+   - Saves results with metadata
+   - Tracks spending and performance
 
-### Via API
-Send a POST request to the service endpoint:
+3. **Phase 3: Refinement Analysis**
+   - Reviews initial findings
+   - Identifies gaps and opportunities
+   - Plans targeted follow-up research
+   - Can use ALL remaining budget
 
-```bash
-curl -X POST http://localhost:8001/extended_audience_profiles/ \
-     -H "Content-Type: application/json" \
-     -d '{"question": "What is the capital of France?"}'
+4. **Phase 4: Deep-Dive Research**
+   - Executes second round of research
+   - Focuses on specific insights
+   - Gathers detailed information
+
+5. **Phase 5: Synthesis**
+   - Combines all research (both rounds)
+   - Creates comprehensive profile
+   - Ensures source attribution
+   - Manages token limits
+
+### Example Research Flow
+
+**Input**: "Millennials interested in sustainable fashion"
+
+**First Round**:
+- General demographics and values
+- Broad fashion preferences
+- Sustainability attitudes
+
+**Refinement Analysis**:
+- "Need deeper info on specific brands"
+- "Clarify price sensitivity patterns"
+- "Explore social media influence"
+
+**Second Round**:
+- Brand loyalty analysis
+- Price point research
+- Instagram/TikTok behavior study
+
+**Output**: 2000+ word comprehensive profile with citations
+
+## 💰 Budget Configuration
+
+Edit `config/masumi.yaml`:
+
+```yaml
+masumi:
+  budget:
+    total: 20.0  # Total USDM budget
+    per_request_max: 20.0
+    per_agent_max:
+      advanced-web-research: 10.0
+      audience-insights-gwi: 10.0
+      ask-the-crowd: 5.0
 ```
 
-## Architecture
+## 🔧 Development
 
-- **Framework**: Kodosumi (Ray + FastAPI)
-- **AI Provider**: Exa.ai /answer endpoint for web search and answer generation
-- **Deployment**: Ray-based distributed processing
-- **Response Format**: Markdown with embedded citations
+### Commands
 
-### Exa.ai Integration
-
-This service uses Exa.ai's new `/answer` endpoint which provides AI-generated answers with web search capabilities. The endpoint uses OpenAI's client interface pattern:
-
-```python
-from openai import OpenAI
-
-client = OpenAI(
-    base_url="https://api.exa.ai",
-    api_key="your_exa_api_key"
-)
-
-completion = client.chat.completions.create(
-    model="exa-pro",
-    messages=[{"role": "user", "content": "Your question"}],
-    extra_body={"text": True}
-)
-```
-
-For more details, see the [Exa.ai /answer documentation](https://docs.exa.ai/reference/answer).
-
-## Development
-
-### Available Commands
-
-- `just start` - Start full service (Ray + kodosumi deployment + spooler + admin panel)
+- `just start` - Start full service stack
 - `just stop` - Stop all services
 - `just test` - Run unit tests
-- `just test-integration` - Run integration tests (requires API key)
-- `just test-all` - Run all tests
+- `just test-integration` - Run integration tests
+- `just test-all` - Run complete test suite
 
-### Manual Setup (Alternative)
-
-If you prefer manual control over each step:
-
-```bash
-source .venv/bin/activate
-
-# Start Ray cluster
-ray start --head --disable-usage-stats
-
-# Deploy the application
-koco deploy -r
-
-# Check deployment status
-koco deploy -s
-
-# Start execution spooler (REQUIRED for executions to run)
-koco spool &
-
-# Start admin panel
-koco serve --register http://localhost:8001/-/routes
-
-# Stop everything
-ray stop
-```
-
-### Project Structure
+### Architecture
 
 ```
 extended-audience-profiles/
 ├── extended_audience_profiles/
-│   ├── __init__.py
-│   ├── agent.py              # Core AI agent logic  
-│   └── query.py              # Kodosumi service wrapper
-├── tests/
-│   ├── __init__.py
-│   └── test_agent.py         # Unit and integration tests
-├── data/config/              # Kodosumi deployment configs
-│   ├── config.yaml
-│   ├── extended_audience_profiles.yaml.example
-│   └── extended_audience_profiles.yaml (create from example)
-├── .env                      # API keys
-├── .env.example             # Environment template
-├── justfile                  # Task runner
-├── pytest.ini              # Test configuration
-└── pyproject.toml           # Dependencies
+│   ├── agent.py              # Core 5-phase orchestration logic
+│   ├── query.py              # Kodosumi service wrapper
+│   ├── masumi.py             # Masumi Network client
+│   ├── tools.py              # OpenAI function tools
+│   ├── state.py              # Ray-based state management
+│   ├── background.py         # Async polling logic
+│   ├── storage.py            # Result persistence
+│   ├── token_utils.py        # Token counting/budgeting
+│   └── truncation.py         # Smart content truncation
+├── config/
+│   └── masumi.yaml           # Masumi Network configuration
+├── data/
+│   ├── config/               # Kodosumi deployment configs
+│   └── results/              # Stored research results
+└── tests/                    # Comprehensive test suite
 ```
 
-## Testing
+### Key Components
 
-The project includes comprehensive test coverage:
+- **Orchestrator Agent** (GPT-4): Plans initial research strategy
+- **Refinement Agent** (o3-mini): Analyzes gaps, plans deep dives  
+- **Consolidator Agent** (o3-mini): Synthesizes all findings
+- **Budget Manager**: Ray-based distributed state management
+- **Token Manager**: Context window tracking and truncation
+- **Storage System**: Filesystem-based result persistence
 
-- **Unit Tests**: Fast, mocked tests for core logic (`just test`)
-- **Integration Tests**: Real API tests with Exa.ai (`just test-integration`)
-- **All Tests**: Complete test suite (`just test-all`)
+## 📈 Monitoring
 
-## Deployment
+### Kodosumi UI Feedback
+- Real-time budget tracking
+- Token usage analysis
+- Task submission confirmations
+- Error handling with context
+- Progress indicators for all phases
 
-For production deployment with kodosumi:
+### Ray Dashboard
+Access at `http://localhost:8265` for:
+- Task execution metrics
+- Resource utilization
+- Error logs and debugging
 
-1. Configure deployment in `data/config/config.yaml`
-2. Deploy using the built-in Ray Serve integration
-3. Monitor via Ray dashboard at `http://localhost:8265`
+## 🔍 Advanced Usage
 
-## License
+### Token Window Management
+The system automatically:
+- Counts tokens before consolidation
+- Applies smart truncation if needed
+- Preserves citations and key findings
+- Warns about truncation in UI
 
-This project follows the license terms of the kodosumi framework.
+### Storage Structure
+```
+data/results/jobs/{job_id}/
+├── metadata.json                    # Job-level metadata
+├── {agent_name}/
+│   ├── {masumi_job_id}.md          # Agent result
+│   └── metadata.json               # Agent metadata with rounds
+└── consolidated/
+    ├── profile.md                  # Final synthesized profile
+    └── summary.json               # Summary with token info
+```
+
+### API Usage
+
+```python
+from extended_audience_profiles import generate_audience_profile
+
+result = await generate_audience_profile(
+    "Gen Z attitudes toward insurance products"
+)
+
+print(result['profile'])  # Comprehensive profile
+print(result['budget_summary'])  # Spending breakdown
+print(result['metadata']['first_round_tasks'])  # Initial research
+print(result['metadata']['second_round_tasks'])  # Deep dives
+```
+
+## 🛡️ Security & Best Practices
+
+- Never commit API keys (use `.env`)
+- Budget limits prevent runaway spending
+- Token limits prevent context overflow
+- All agent calls are logged and tracked
+- Results stored locally for audit trail
+
+## 📝 License
+
+This project follows the license terms of the kodosumi framework and Masumi Network usage agreements.
