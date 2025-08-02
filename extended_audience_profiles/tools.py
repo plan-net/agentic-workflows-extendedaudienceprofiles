@@ -49,7 +49,12 @@ async def list_available_agents() -> Dict[str, Any]:
             agents_info.append({
                 'name': agent['name'],
                 'description': agent.get('description', 'No description'),
+                'capabilities': agent.get('capabilities', []),
+                'best_for': agent.get('best_for', ''),
+                'example_prompts': agent.get('example_prompts', []),
+                'limitations': agent.get('limitations', []),
                 'endpoint': agent.get('endpoint', 'N/A'),
+                'price': agent.get('price', 0.0),
                 'budget_remaining': agent_budget.get('remaining', 0),
                 'budget_spent': agent_budget.get('spent', 0),
                 'max_budget': agent_budget.get('max_budget', 'unlimited')
