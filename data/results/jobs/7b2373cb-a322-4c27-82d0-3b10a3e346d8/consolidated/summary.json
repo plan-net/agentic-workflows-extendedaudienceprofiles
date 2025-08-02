@@ -1,0 +1,21 @@
+{
+  "job_id": "7b2373cb-a322-4c27-82d0-3b10a3e346d8",
+  "audience_description": "buyers of premium electric vehicles like the porsche taycan",
+  "generated_at": "2025-08-02T07:51:05.635288",
+  "total_agents": 3,
+  "agent_executions": [
+    {
+      "masumi_job_id": "be89e0f0-16ec-45b0-a6ee-d5a42b3b0265",
+      "agent": "audience-insights-gwi"
+    },
+    {
+      "masumi_job_id": "6fe47894-7727-4e8b-953f-d9ace2536f1a",
+      "agent": "advanced-web-research"
+    },
+    {
+      "masumi_job_id": "928f8716-1851-41fc-b8b7-1e6c9e26f8b2",
+      "agent": "advanced-web-research"
+    }
+  ],
+  "profile_file": "jobs/7b2373cb-a322-4c27-82d0-3b10a3e346d8/consolidated/profile.md"
+}

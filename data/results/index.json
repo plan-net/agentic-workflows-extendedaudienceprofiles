@@ -1,5 +1,19 @@
 [
   {
+    "job_id": "bff37ec4-8a4b-4a00-b338-8a31aa5ed723",
+    "audience_description": "millenials interested in sustainable fashion",
+    "created_at": 1754114552.234755,
+    "total_agents": 3,
+    "status": "completed"
+  },
+  {
+    "job_id": "7b2373cb-a322-4c27-82d0-3b10a3e346d8",
+    "audience_description": "buyers of premium electric vehicles like the porsche taycan",
+    "created_at": 1754113865.635158,
+    "total_agents": 3,
+    "status": "completed"
+  },
+  {
     "job_id": "67fdfea5-83c8-4b43-a376-494d1bd499d6",
     "audience_description": "millenials with in an interest in sustainable fashion",
     "created_at": 1754112975.2607229,

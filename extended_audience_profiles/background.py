@@ -31,7 +31,7 @@ def poll_masumi_jobs(job_execution_ref: ray.ObjectRef) -> ray.ObjectRef:
     return asyncio.run(_poll_masumi_jobs_async(job_execution_ref))
 
 
-async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, tracer=None) -> ray.ObjectRef:
+async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: ray.ObjectRef = None, tracer=None) -> ray.ObjectRef:
     """Async implementation of job polling"""
     job_execution = StateManager.get_job_execution(job_execution_ref)
     logger.info(f"Starting background task polling for job execution {job_execution.job_id}")
@@ -40,7 +40,7 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, tracer=None)
     if tracer:
         await tracer.markdown(f"📊 Found {len(job_execution.agent_tasks)} agent tasks to poll")
     
-    client = MasumiClient()
+    client = MasumiClient(budget_ref=budget_ref)
     
     # Polling configuration
     initial_interval = 10.0  # Start with 10 seconds

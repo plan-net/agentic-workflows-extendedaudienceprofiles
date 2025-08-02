@@ -9,11 +9,13 @@ agents:
   - name: "audience-insights-gwi"
     endpoint: "http://138.68.88.241:8000/Audience%20Insights%20GWI"  
     description: "Global Web Index audience insights"
-    max_total_spend: 20.0  # Optional: can call this agent until 100.0 is spent
+    price: 3.0  # Expected cost per job in ADA
+    max_total_spend: 20.0  # Optional: can call this agent until 20.0 is spent
     enabled: true
     
   - name: "advanced-web-research"
     endpoint: "http://138.68.88.241:8000/Advanced%20Web%20Research"
     description: "Advanced web research agent for comprehensive web research"
+    price: 2.5  # Expected cost per job in ADA
     # No max_total_spend means only limited by total_budget
     enabled: true

@@ -5,42 +5,74 @@ import asyncio
 import json
 import logging
 import time
+import ray
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
-from .tools import list_available_agents, get_agent_input_schema, execute_agent_job
-from .state import StateManager, Job
+from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_budget_ref
+from .state import StateManager, Job, BudgetManager
 from .background import _poll_masumi_jobs_async
 from .storage import storage
+from .masumi import MasumiClient
 
 logger = logging.getLogger(__name__)
+
+# Global budget reference - initialized once per process
+_budget_ref = None
+
+def get_or_create_budget_ref() -> ray.ObjectRef:
+    """Get or create the global budget reference."""
+    global _budget_ref
+    if _budget_ref is None:
+        # Initialize budget from config
+        client = MasumiClient()  # Load config
+        _budget_ref = BudgetManager.initialize_budget(
+            client.budget_config,
+            client.agents_config
+        )
+        logger.info("Initialized global budget state")
+    return _budget_ref
 
 # Phase 1: Orchestrator agent that submits jobs to Masumi agents
 orchestrator_agent = Agent(
     name="audience-profile-orchestrator",
     instructions="""You are an intelligent orchestrator that submits jobs to Masumi Network agents.
     
-    Your role is to analyze the audience description and submit multiple research jobs in parallel.
+    Your role is to analyze the audience description and submit multiple research jobs in parallel while optimizing budget usage.
     You DO NOT wait for results - just submit jobs and return tracking information.
     
     When given an audience description, follow these steps:
-    1. List available agents to understand your options and check budgets
-    2. Based on the audience description, decide which agents to use and what questions to ask
+    1. List available agents to understand your options and CHECK REMAINING BUDGET
+       - Pay attention to each agent's price and remaining budget
+       - Consider the total remaining budget vs individual agent limits
+    
+    2. Plan your job submissions to maximize value within budget constraints
+       - Consider agent prices and what each agent specializes in
+       - Prioritize high-value research angles if budget is limited
+       - Aim for 2-3 complementary jobs, but adjust based on budget
+       - If budget only allows 1-2 jobs, choose the most important questions
+    
     3. Get the input schema for each agent you want to use
-    4. Submit 2-3 different research jobs with complementary questions/angles
+    
+    4. Submit jobs while respecting budget limits
+       - The tool will enforce budget constraints, but plan wisely
+       - If a job fails due to budget, adjust your strategy
+    
     5. Return a summary of all submitted jobs with their IDs
     
-    Example strategy:
-    - For "millennials interested in sustainable fashion":
-      - Job 1: Research demographic characteristics and values
-      - Job 2: Research shopping behaviors and brand preferences
-      - Job 3: Research social media habits and influencers
+    Budget optimization tips:
+    - Check prices: some agents may be more expensive than others
+    - Consider value: a more expensive agent might provide better insights
+    - Plan ahead: ensure you have budget for all planned jobs before starting
+    - Be flexible: if budget is tight, prioritize quality over quantity
+    
+    Example strategy for limited budget:
+    - If total remaining is 10.0 and agents cost 3.0 each, plan for 3 jobs max
+    - If an agent has reached its spending limit, use alternative agents
     
     Important:
-    - Submit jobs to different agents if appropriate, or multiple jobs to the same agent
     - Each job should explore a different aspect of the audience
     - DO NOT wait for results - your job is done after submission
-    - Return all job IDs and what each job is researching
-    - CRITICAL: For the 'ask-the-crowd' agent, the 'option' field MUST be an array of strings, not a single string
+    - CRITICAL: For the 'ask-the-crowd' agent, the 'option' field MUST be an array of strings
       Example: {"statement": "...", "option": ["Agree", "Disagree"]}
     """,
     model="gpt-4o",
@@ -168,10 +200,11 @@ def _create_success_response(
     profile: str,
     job_id: str,
     results: Dict[str, Any],
-    submitted_tasks: List[Dict[str, str]]
+    submitted_tasks: List[Dict[str, str]],
+    budget_ref: Optional[ray.ObjectRef] = None
 ) -> Dict[str, Any]:
     """Create a standardized success response with metadata."""
-    return {
+    response = {
         "audience_description": audience_description,
         "profile": profile,
         "metadata": {
@@ -187,6 +220,22 @@ def _create_success_response(
         "success": True,
         "error": None
     }
+    
+    # Add budget summary if available
+    if budget_ref:
+        try:
+            budget_summary = BudgetManager.get_budget_summary(budget_ref)
+            response["budget_summary"] = {
+                "total_budget": budget_summary["total_budget"],
+                "total_spent": budget_summary["total_spent"],
+                "total_remaining": budget_summary["total_remaining"],
+                "cost_accuracy": budget_summary.get("cost_accuracy"),
+                "agent_breakdown": budget_summary["agents"]
+            }
+        except Exception as e:
+            logger.warning(f"Failed to get budget summary: {str(e)}")
+    
+    return response
 
 
 async def generate_audience_profile(audience_description: str, tracer=None) -> Dict[str, Any]:
@@ -205,6 +254,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
     """
     try:
         logger.info(f"Starting audience profile generation for: {audience_description}")
+        
+        # Initialize budget reference
+        budget_ref = get_or_create_budget_ref()
+        set_budget_ref(budget_ref)
         
         # Create a new job execution in Ray state
         job_id, job_execution_ref = StateManager.create_job_execution(audience_description)
@@ -292,7 +345,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("⏳ Polling for results (5-20 minutes)...")
         
         # Run the polling directly in this async context so we can use the tracer
-        final_job_execution_ref = await _poll_masumi_jobs_async(job_execution_ref, tracer)
+        final_job_execution_ref = await _poll_masumi_jobs_async(job_execution_ref, budget_ref, tracer)
         
         # Get the completed job execution results
         results = StateManager.get_results(final_job_execution_ref)
@@ -353,7 +406,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             profile=consolidator_result.final_output,
             job_id=job_id,
             results=results,
-            submitted_tasks=submitted_tasks
+            submitted_tasks=submitted_tasks,
+            budget_ref=budget_ref
         )
         
     except Exception as e:

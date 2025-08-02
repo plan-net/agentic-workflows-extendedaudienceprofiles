@@ -4,11 +4,21 @@ Tools for OpenAI Agents - includes Masumi Network integration tools
 from typing import Dict, Any, List, Optional
 from agents import function_tool
 from .masumi import MasumiClient
+from .state import BudgetManager
 import ray
 import logging
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# Global budget reference set by the agent
+_budget_ref = None
+
+def set_budget_ref(budget_ref: ray.ObjectRef) -> None:
+    """Set the global budget reference for tools to use."""
+    global _budget_ref
+    _budget_ref = budget_ref
+    logger.info("Budget reference set for tools")
 
 
 # Pydantic models for strict schema compliance
@@ -78,7 +88,7 @@ async def list_available_agents() -> Dict[str, Any]:
         Dict containing available agents and budget summary
     """
     try:
-        client = MasumiClient()
+        client = MasumiClient(budget_ref=_budget_ref)
         available_agents = client.get_available_agents()
         budget_summary = client.get_budget_summary()
         
@@ -123,7 +133,7 @@ async def get_agent_input_schema(agent_name: str) -> Dict[str, Any]:
         Dict containing the input schema and requirements
     """
     try:
-        client = MasumiClient()
+        client = MasumiClient(budget_ref=_budget_ref)
         
         # Check if agent exists
         agent_config = client.get_agent_config(agent_name)
@@ -166,22 +176,42 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
         Dict containing job_id and submission status (not the result)
     """
     try:
-        client = MasumiClient()
+        client = MasumiClient(budget_ref=_budget_ref)
         
-        # Check budget before starting
-        remaining_budget = client.get_agent_remaining_budget(agent_name)
-        if remaining_budget <= 0:
+        # Get agent config for price info
+        agent_config = client.get_agent_config(agent_name)
+        if not agent_config:
             return {
                 'success': False,
-                'error': f"No remaining budget for agent '{agent_name}'",
+                'error': f"Agent '{agent_name}' not found",
                 'job_id': None,
-                'error_type': 'budget_exceeded',
-                'budget_info': {
-                    'agent_spent': client.get_agent_spending(agent_name),
-                    'total_spent': client.get_total_spending(),
-                    'remaining': 0
-                }
+                'error_type': 'agent_not_found'
             }
+        
+        # Check and reserve budget BEFORE starting the job
+        expected_cost = 0.0
+        if _budget_ref:
+            can_afford, expected_cost, reason, new_budget_ref = BudgetManager.check_and_reserve_budget(
+                _budget_ref, agent_name, agent_config
+            )
+            
+            if not can_afford:
+                return {
+                    'success': False,
+                    'error': reason,
+                    'job_id': None,
+                    'error_type': 'budget_exceeded',
+                    'budget_info': {
+                        'expected_cost': expected_cost,
+                        'agent_spent': client.get_agent_spending(agent_name),
+                        'total_spent': client.get_total_spending(),
+                        'remaining': client.get_agent_remaining_budget(agent_name)
+                    }
+                }
+            
+            # Update global budget ref
+            global _budget_ref
+            _budget_ref = new_budget_ref
         
         # Step 1: Start the job
         logger.info(f"Starting job with agent: {agent_name}")
@@ -194,31 +224,50 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
         
         # Step 2: Create purchase to complete payment
         logger.info(f"Creating purchase for job {job_id}")
-        purchase_result = await client.create_purchase(job_response, input_data, agent_name)
-        
-        if not purchase_result.get('success'):
+        try:
+            purchase_result = await client.create_purchase(job_response, input_data, agent_name)
+            
+            if not purchase_result.get('success'):
+                # Release the budget reservation
+                if _budget_ref:
+                    _budget_ref = BudgetManager.release_reservation(_budget_ref, agent_name, expected_cost)
+                
+                return {
+                    'success': False,
+                    'error': 'Failed to complete purchase for job',
+                    'job_id': job_id,
+                    'error_type': 'payment_error'
+                }
+            
+            # Record actual cost
+            actual_cost = purchase_result.get('actual_cost', 0.0)
+            if _budget_ref and actual_cost > 0:
+                _budget_ref = BudgetManager.record_actual_cost(
+                    _budget_ref, agent_name, expected_cost, actual_cost, job_id
+                )
+            
+            # Return immediately without waiting
+            logger.info(f"Job {job_id} submitted successfully, payment completed")
+            
             return {
-                'success': False,
-                'error': 'Failed to complete purchase for job',
+                'success': True,
                 'job_id': job_id,
-                'error_type': 'payment_error'
+                'agent_name': agent_name,
+                'status': 'submitted',
+                'message': f"Job submitted to {agent_name}. Will complete in 5-20 minutes.",
+                'budget_info': {
+                    'job_cost': actual_cost,
+                    'expected_cost': expected_cost,
+                    'agent_remaining': client.get_agent_remaining_budget(agent_name),
+                    'total_remaining': client.get_remaining_budget()
+                }
             }
-        
-        # Return immediately without waiting
-        logger.info(f"Job {job_id} submitted successfully, payment completed")
-        
-        return {
-            'success': True,
-            'job_id': job_id,
-            'agent_name': agent_name,
-            'status': 'submitted',
-            'message': f"Job submitted to {agent_name}. Will complete in 5-20 minutes.",
-            'budget_info': {
-                'job_cost': purchase_result.get('actual_cost', 'unknown'),
-                'agent_remaining': client.get_agent_remaining_budget(agent_name),
-                'total_remaining': client.get_remaining_budget()
-            }
-        }
+            
+        except Exception as e:
+            # Release budget reservation on any error
+            if _budget_ref:
+                _budget_ref = BudgetManager.release_reservation(_budget_ref, agent_name, expected_cost)
+            raise
         
     except ValueError as ve:
         # Validation errors

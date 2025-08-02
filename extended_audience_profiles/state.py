@@ -3,7 +3,7 @@ State management using Ray's object store for distributed job tracking
 """
 import ray
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import time
 import uuid
 import logging
@@ -128,4 +128,161 @@ class StateManager:
             "results": results,
             "is_complete": job_execution.is_complete(),
             "total_duration": job_execution.completed_at - job_execution.created_at if job_execution.completed_at else None
+        }
+
+
+@dataclass
+class BudgetState:
+    """Budget tracking state in Ray object store"""
+    total_budget: float
+    total_spent: float = 0.0
+    agent_spending: Dict[str, float] = field(default_factory=dict)
+    agent_limits: Dict[str, float] = field(default_factory=dict)  # max_total_spend per agent
+    agent_prices: Dict[str, float] = field(default_factory=dict)  # Expected prices from yaml
+    actual_costs: List[Dict[str, Any]] = field(default_factory=list)  # Track actual vs expected
+    reserved_amounts: Dict[str, float] = field(default_factory=dict)  # Temporary reservations
+    
+    def get_agent_spent(self, agent_name: str) -> float:
+        """Get total amount spent on a specific agent"""
+        return self.agent_spending.get(agent_name, 0.0)
+    
+    def get_agent_remaining(self, agent_name: str) -> float:
+        """Get remaining budget for a specific agent"""
+        agent_limit = self.agent_limits.get(agent_name, float('inf'))
+        agent_spent = self.get_agent_spent(agent_name)
+        agent_reserved = self.reserved_amounts.get(agent_name, 0.0)
+        total_remaining = self.total_budget - self.total_spent - sum(self.reserved_amounts.values())
+        
+        # Agent's remaining is the minimum of its own limit and total remaining
+        agent_specific_remaining = agent_limit - agent_spent - agent_reserved
+        return min(agent_specific_remaining, total_remaining)
+
+
+class BudgetManager:
+    """Manages budget state in Ray's object store"""
+    
+    @staticmethod
+    def initialize_budget(budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]) -> ray.ObjectRef:
+        """Initialize budget state from config"""
+        budget_state = BudgetState(
+            total_budget=budget_config.get('total_budget', float('inf')),
+            agent_prices={agent['name']: agent.get('price', 0.0) for agent in agents_config},
+            agent_limits={agent['name']: agent.get('max_total_spend', float('inf')) for agent in agents_config}
+        )
+        ref = ray.put(budget_state)
+        logger.info(f"Initialized budget state with total budget: {budget_state.total_budget}")
+        return ref
+    
+    @staticmethod
+    def check_and_reserve_budget(ref: ray.ObjectRef, agent_name: str, agent_config: Dict[str, Any]) -> Tuple[bool, float, str, ray.ObjectRef]:
+        """
+        Check if budget allows job and reserve funds.
+        
+        Returns:
+            Tuple of (can_afford, expected_cost, reason, new_ref)
+        """
+        budget_state = ray.get(ref)
+        
+        # Get expected price
+        expected_cost = budget_state.agent_prices.get(agent_name, agent_config.get('price', 0.0))
+        
+        # Check agent remaining budget
+        agent_remaining = budget_state.get_agent_remaining(agent_name)
+        
+        if agent_remaining <= 0:
+            return False, expected_cost, f"No remaining budget for agent {agent_name}", ref
+        
+        if expected_cost > agent_remaining:
+            return False, expected_cost, f"Expected cost {expected_cost} exceeds remaining budget {agent_remaining}", ref
+        
+        # Reserve the expected amount
+        if agent_name not in budget_state.reserved_amounts:
+            budget_state.reserved_amounts[agent_name] = 0.0
+        budget_state.reserved_amounts[agent_name] += expected_cost
+        
+        new_ref = ray.put(budget_state)
+        logger.info(f"Reserved {expected_cost} for {agent_name}, remaining: {agent_remaining - expected_cost}")
+        return True, expected_cost, "Budget reserved", new_ref
+    
+    @staticmethod
+    def record_actual_cost(ref: ray.ObjectRef, agent_name: str, expected: float, actual: float, job_id: str) -> ray.ObjectRef:
+        """Record actual cost and update price estimates"""
+        budget_state = ray.get(ref)
+        
+        # Remove reservation
+        if agent_name in budget_state.reserved_amounts:
+            budget_state.reserved_amounts[agent_name] = max(0, budget_state.reserved_amounts[agent_name] - expected)
+        
+        # Record actual spending
+        if agent_name not in budget_state.agent_spending:
+            budget_state.agent_spending[agent_name] = 0.0
+        budget_state.agent_spending[agent_name] += actual
+        budget_state.total_spent += actual
+        
+        # Track cost accuracy
+        budget_state.actual_costs.append({
+            'agent_name': agent_name,
+            'job_id': job_id,
+            'expected': expected,
+            'actual': actual,
+            'difference': actual - expected,
+            'timestamp': time.time()
+        })
+        
+        # Update price estimate if actual cost differs significantly (>10%)
+        if expected > 0 and abs(actual - expected) / expected > 0.1:
+            # Use weighted average of last 5 jobs
+            recent_costs = [c for c in budget_state.actual_costs[-5:] if c['agent_name'] == agent_name]
+            if recent_costs:
+                avg_actual = sum(c['actual'] for c in recent_costs) / len(recent_costs)
+                budget_state.agent_prices[agent_name] = avg_actual
+                logger.info(f"Updated {agent_name} price estimate from {expected} to {avg_actual}")
+        
+        new_ref = ray.put(budget_state)
+        logger.info(f"Recorded actual cost {actual} for {agent_name} (expected: {expected})")
+        return new_ref
+    
+    @staticmethod
+    def release_reservation(ref: ray.ObjectRef, agent_name: str, amount: float) -> ray.ObjectRef:
+        """Release a budget reservation (e.g., if job fails to start)"""
+        budget_state = ray.get(ref)
+        
+        if agent_name in budget_state.reserved_amounts:
+            budget_state.reserved_amounts[agent_name] = max(0, budget_state.reserved_amounts[agent_name] - amount)
+            logger.info(f"Released reservation of {amount} for {agent_name}")
+        
+        return ray.put(budget_state)
+    
+    @staticmethod
+    def get_budget_summary(ref: ray.ObjectRef) -> Dict[str, Any]:
+        """Get comprehensive budget summary"""
+        budget_state = ray.get(ref)
+        
+        agent_summary = {}
+        for agent_name in set(list(budget_state.agent_spending.keys()) + list(budget_state.agent_limits.keys())):
+            agent_summary[agent_name] = {
+                'spent': budget_state.get_agent_spent(agent_name),
+                'reserved': budget_state.reserved_amounts.get(agent_name, 0.0),
+                'remaining': budget_state.get_agent_remaining(agent_name),
+                'limit': budget_state.agent_limits.get(agent_name, float('inf')),
+                'expected_price': budget_state.agent_prices.get(agent_name, 0.0)
+            }
+        
+        # Calculate cost accuracy
+        cost_accuracy = None
+        if budget_state.actual_costs:
+            total_expected = sum(c['expected'] for c in budget_state.actual_costs if c['expected'] > 0)
+            total_actual = sum(c['actual'] for c in budget_state.actual_costs)
+            if total_expected > 0:
+                accuracy_pct = ((total_actual - total_expected) / total_expected) * 100
+                cost_accuracy = f"Actual costs were {accuracy_pct:+.1f}% vs estimates"
+        
+        return {
+            'total_budget': budget_state.total_budget,
+            'total_spent': budget_state.total_spent,
+            'total_reserved': sum(budget_state.reserved_amounts.values()),
+            'total_remaining': budget_state.total_budget - budget_state.total_spent - sum(budget_state.reserved_amounts.values()),
+            'agents': agent_summary,
+            'cost_accuracy': cost_accuracy,
+            'recent_costs': budget_state.actual_costs[-10:]  # Last 10 transactions
         }
