@@ -173,6 +173,12 @@ class StateManager:
         state.agent_spending[agent_name] += actual
         state.total_spent += actual
         
+        # Debug logging
+        logger.info(f"Budget update for {agent_name}:")
+        logger.info(f"  - Previous spending: {state.agent_spending[agent_name] - actual:.2f}")
+        logger.info(f"  - New spending: {state.agent_spending[agent_name]:.2f}")
+        logger.info(f"  - Total spent: {state.total_spent:.2f}")
+        
         new_ref = ray.put(state)
         logger.info(f"Recorded cost {actual} for {agent_name} (expected: {expected})")
         return new_ref
@@ -209,6 +215,7 @@ class StateManager:
                 results[task.id] = {
                     "agent_name": task.agent_name,
                     "result": task.result,
+                    "input_data": task.input_data if hasattr(task, 'input_data') else {},
                     "duration": task.completed_at - task.started_at if task.started_at else None
                 }
         

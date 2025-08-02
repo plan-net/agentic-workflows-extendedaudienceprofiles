@@ -182,15 +182,18 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     expected_cost = budget_info.get('expected_cost', 0)
                     
                     await tracer.markdown(f"💸 Submitted to **{task.agent_name}**:")
-                    await tracer.markdown(f"   - Cost: {actual_cost:.1f} USDM")
                     
-                    # Warn if actual price differs from expected
+                    # Show cost and warn if actual price differs from expected
                     if expected_cost > 0 and abs(actual_cost - expected_cost) > 0.01:
                         price_diff_pct = ((actual_cost - expected_cost) / expected_cost) * 100
                         if actual_cost > expected_cost:
-                            await tracer.markdown(f"   - ⚠️ **Price higher than expected**: {actual_cost:.1f} USDM (expected {expected_cost:.1f} USDM, +{price_diff_pct:.0f}%)")
+                            await tracer.markdown(f"   - Cost: {actual_cost:.1f} USDM")
+                            await tracer.markdown(f"   - ⚠️ Price higher than expected: {actual_cost:.1f} USDM (expected {expected_cost:.1f} USDM, +{price_diff_pct:.0f}%)")
                         else:
-                            await tracer.markdown(f"   - ✅ **Price lower than expected**: {actual_cost:.1f} USDM (expected {expected_cost:.1f} USDM, {price_diff_pct:.0f}%)")
+                            await tracer.markdown(f"   - Cost: {actual_cost:.1f} USDM")
+                            await tracer.markdown(f"   - ✅ Price lower than expected: {actual_cost:.1f} USDM (expected {expected_cost:.1f} USDM, {price_diff_pct:.0f}%)")
+                    else:
+                        await tracer.markdown(f"   - Cost: {actual_cost:.1f} USDM")
                     
                     await tracer.markdown(f"   - Remaining budget: {budget_info.get('total_remaining', 0):.1f} USDM")
             
@@ -289,10 +292,12 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown(f"\n✅ **Submitted {len(second_round_tasks)} deep-dive tasks**")
         
         # Phase 4: Poll for second round results
+        logger.info("Phase 4: Second round results phase...")
+        if tracer:
+            await tracer.markdown("\n🔍 **Phase 4: Deep-Dive Research**")
+            
         if second_round_tasks:
-            logger.info("Phase 4: Polling for second round results...")
             if tracer:
-                await tracer.markdown("\n🔍 **Phase 4: Second Round Results**")
                 await tracer.markdown("⏳ Polling for deep-dive results...")
             
             # Poll again for second round
@@ -303,6 +308,9 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             
             if not results['is_complete']:
                 raise Exception("Not all jobs completed successfully")
+        else:
+            if tracer:
+                await tracer.markdown("ℹ️ No additional research needed - initial results were comprehensive")
         
         # Phase 5: Run consolidator to synthesize all results
         logger.info("Phase 5: Running consolidator agent to synthesize all results...")

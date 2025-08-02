@@ -196,8 +196,12 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             
             # Record actual cost
             actual_cost = purchase_result.get('actual_cost', 0.0)
+            logger.info(f"Purchase result for {agent_name}: actual_cost={actual_cost}, expected_cost={expected_cost}")
             if _state_ref and actual_cost > 0:
+                logger.info(f"Recording cost: {actual_cost} USDM for {agent_name}")
                 _state_ref = StateManager.record_cost(_state_ref, agent_name, expected_cost, actual_cost)
+            else:
+                logger.warning(f"Not recording cost - actual_cost={actual_cost}, state_ref={_state_ref is not None}")
             
             # Return immediately without waiting
             logger.info(f"Job {job_id} submitted successfully, payment completed")
