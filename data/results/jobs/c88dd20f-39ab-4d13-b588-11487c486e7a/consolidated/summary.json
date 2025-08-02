@@ -1,0 +1,17 @@
+{
+  "job_id": "c88dd20f-39ab-4d13-b588-11487c486e7a",
+  "audience_description": "Millenials with an interest in sustainable fashion",
+  "generated_at": "2025-08-02T08:28:51.273968",
+  "total_agents": 2,
+  "agent_executions": [
+    {
+      "masumi_job_id": "389bb4ee-2758-4346-afb9-39af09ab83fa",
+      "agent": "audience-insights-gwi"
+    },
+    {
+      "masumi_job_id": "ae20e856-1713-4898-b554-d62cb18d4264",
+      "agent": "advanced-web-research"
+    }
+  ],
+  "profile_file": "jobs/c88dd20f-39ab-4d13-b588-11487c486e7a/consolidated/profile.md"
+}

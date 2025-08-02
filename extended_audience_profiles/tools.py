@@ -88,9 +88,16 @@ async def list_available_agents() -> Dict[str, Any]:
         Dict containing available agents and budget summary
     """
     try:
-        client = MasumiClient(budget_ref=_budget_ref)
+        client = MasumiClient()
         available_agents = client.get_available_agents()
-        budget_summary = client.get_budget_summary()
+        
+        # Get budget summary directly from BudgetManager
+        budget_summary = BudgetManager.get_budget_summary(_budget_ref) if _budget_ref else {
+            'total_budget': float('inf'),
+            'total_spent': 0.0,
+            'total_remaining': float('inf'),
+            'agents': {}
+        }
         
         # Format agent information for the AI to understand
         agents_info = []
@@ -133,7 +140,7 @@ async def get_agent_input_schema(agent_name: str) -> Dict[str, Any]:
         Dict containing the input schema and requirements
     """
     try:
-        client = MasumiClient(budget_ref=_budget_ref)
+        client = MasumiClient()
         
         # Check if agent exists
         agent_config = client.get_agent_config(agent_name)
@@ -178,7 +185,7 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
     global _budget_ref
     
     try:
-        client = MasumiClient(budget_ref=_budget_ref)
+        client = MasumiClient()
         
         # Get agent config for price info
         agent_config = client.get_agent_config(agent_name)
@@ -198,6 +205,10 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             )
             
             if not can_afford:
+                # Get current budget state for error response
+                budget_summary = BudgetManager.get_budget_summary(_budget_ref)
+                agent_info = budget_summary['agents'].get(agent_name, {})
+                
                 return {
                     'success': False,
                     'error': reason,
@@ -205,9 +216,9 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                     'error_type': 'budget_exceeded',
                     'budget_info': {
                         'expected_cost': expected_cost,
-                        'agent_spent': client.get_agent_spending(agent_name),
-                        'total_spent': client.get_total_spending(),
-                        'remaining': client.get_agent_remaining_budget(agent_name)
+                        'agent_spent': agent_info.get('spent', 0),
+                        'total_spent': budget_summary['total_spent'],
+                        'remaining': agent_info.get('remaining', 0)
                     }
                 }
             
@@ -250,6 +261,10 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             # Return immediately without waiting
             logger.info(f"Job {job_id} submitted successfully, payment completed")
             
+            # Get updated budget info after recording actual cost
+            budget_summary = BudgetManager.get_budget_summary(_budget_ref) if _budget_ref else None
+            agent_info = budget_summary['agents'].get(agent_name, {}) if budget_summary else {}
+            
             return {
                 'success': True,
                 'job_id': job_id,
@@ -259,8 +274,8 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                 'budget_info': {
                     'job_cost': actual_cost,
                     'expected_cost': expected_cost,
-                    'agent_remaining': client.get_agent_remaining_budget(agent_name),
-                    'total_remaining': client.get_remaining_budget()
+                    'agent_remaining': agent_info.get('remaining', 0),
+                    'total_remaining': budget_summary['total_remaining'] if budget_summary else 0
                 }
             }
             

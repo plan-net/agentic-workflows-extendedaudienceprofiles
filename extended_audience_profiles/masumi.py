@@ -12,7 +12,6 @@ from masumi import Config, Purchase
 import logging
 import requests
 import secrets
-import ray
 
 logger = logging.getLogger(__name__)
 
@@ -20,18 +19,16 @@ logger = logging.getLogger(__name__)
 class MasumiClient:
     """Client for interacting with Masumi Network agents."""
     
-    def __init__(self, config_path: str = "config/masumi.yaml", budget_ref: Optional[ray.ObjectRef] = None):
+    def __init__(self, config_path: str = "config/masumi.yaml"):
         """Initialize MasumiClient with configuration.
         
         Args:
             config_path: Path to masumi.yaml configuration
-            budget_ref: Ray object reference to shared budget state
         """
         self.config_path = config_path
         self.budget_config = {}
         self.agents_config = []
         self.masumi_sdk_config = None
-        self.budget_ref = budget_ref
         self._load_config()
         self._validate_agent_availability()
     
@@ -125,48 +122,6 @@ class MasumiClient:
         """Get configuration for a specific agent."""
         return next((a for a in self.agents_config if a['name'] == agent_name), None)
     
-    def get_remaining_budget(self) -> float:
-        """Get remaining total budget."""
-        if not self.budget_ref:
-            # Fallback to config if no Ray budget state
-            return self.budget_config.get('total_budget', float('inf'))
-        
-        from .state import BudgetManager
-        summary = BudgetManager.get_budget_summary(self.budget_ref)
-        return summary['total_remaining']
-    
-    def get_agent_remaining_budget(self, agent_name: str) -> float:
-        """Get remaining budget for a specific agent."""
-        if not self.budget_ref:
-            # Fallback to config if no Ray budget state
-            agent = self.get_agent_config(agent_name)
-            if not agent:
-                return 0.0
-            return agent.get('max_total_spend', float('inf'))
-        
-        from .state import BudgetManager
-        summary = BudgetManager.get_budget_summary(self.budget_ref)
-        agent_info = summary['agents'].get(agent_name, {})
-        return agent_info.get('remaining', 0.0)
-    
-    def get_agent_spending(self, agent_name: str) -> float:
-        """Get total amount spent on a specific agent."""
-        if not self.budget_ref:
-            return 0.0
-        
-        from .state import BudgetManager
-        summary = BudgetManager.get_budget_summary(self.budget_ref)
-        agent_info = summary['agents'].get(agent_name, {})
-        return agent_info.get('spent', 0.0)
-    
-    def get_total_spending(self) -> float:
-        """Get total amount spent across all agents."""
-        if not self.budget_ref:
-            return 0.0
-        
-        from .state import BudgetManager
-        summary = BudgetManager.get_budget_summary(self.budget_ref)
-        return summary['total_spent']
     
     async def start_job(self, agent_name: str, input_data: Dict[str, Any]) -> Dict[str, Any]:
         """Start a job with the specified agent."""
@@ -365,32 +320,3 @@ class MasumiClient:
         }
         return mapping.get(masumi_type.lower(), 'string')
     
-    def get_budget_summary(self) -> Dict[str, Any]:
-        """Get a summary of budget usage."""
-        if self.budget_ref:
-            # Use Ray budget state
-            from .state import BudgetManager
-            return BudgetManager.get_budget_summary(self.budget_ref)
-        
-        # Fallback to config-based summary
-        total = self.budget_config.get('total_budget', float('inf'))
-        
-        agents_summary = {}
-        for agent in self.agents_config:
-            name = agent['name']
-            max_budget = agent.get('max_total_spend', float('inf'))
-            
-            agents_summary[name] = {
-                'max_budget': 'unlimited' if max_budget == float('inf') else max_budget,
-                'spent': 0.0,
-                'remaining': max_budget,
-                'enabled': agent.get('enabled', True),
-                'expected_price': agent.get('price', 0.0)
-            }
-        
-        return {
-            'total_budget': total,
-            'total_spent': 0.0,
-            'total_remaining': total,
-            'agents': agents_summary
-        }

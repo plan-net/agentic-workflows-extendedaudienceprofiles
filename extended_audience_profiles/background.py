@@ -40,7 +40,7 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
     if tracer:
         await tracer.markdown(f"📊 Found {len(job_execution.agent_tasks)} agent tasks to poll")
     
-    client = MasumiClient(budget_ref=budget_ref)
+    client = MasumiClient()
     
     # Polling configuration
     initial_interval = 10.0  # Start with 10 seconds
