@@ -68,7 +68,7 @@ consolidator_agent = Agent(
     Format the output as a well-structured report with clear sections and actionable insights.
     Focus on practical recommendations for reaching and engaging this audience.
     """,
-    model="gpt-4o",
+    model="o3-mini",
     tools=[]  # Consolidator doesn't need tools - just processes provided data
 )
 
