@@ -14,9 +14,9 @@ An advanced AI-powered audience research system that leverages the Masumi Networ
 
 ### Advanced Capabilities
 - **Distributed Agent Network**: Access to specialized Masumi Network agents:
-  - `advanced-web-research`: Deep web search and analysis
-  - `audience-insights-gwi`: Global Web Index data insights
-  - `ask-the-crowd`: Crowd-sourced opinions and surveys
+  - `advanced-web-research`: Deep web search and analysis with citations
+  - `audience-insights-gwi`: Global Web Index consumer data (250K+ profiling points)
+  - `ask-the-crowd`: Real-time crowd-sourced opinions and preference testing
 - **Evidence-Based Profiles**: Every insight includes source citations
 - **Smart Truncation**: Intelligent content management when approaching token limits
 - **Real-Time Progress Tracking**: Detailed UI feedback through Kodosumi tracer
@@ -140,9 +140,9 @@ masumi:
     total: 20.0  # Total USDM budget
     per_request_max: 20.0
     per_agent_max:
-      advanced-web-research: 10.0
-      audience-insights-gwi: 10.0
-      ask-the-crowd: 5.0
+      advanced-web-research: 10.0  # Web research & citations
+      audience-insights-gwi: 10.0   # GWI consumer data
+      ask-the-crowd: 5.0           # Crowd opinions
 ```
 
 ## 🔧 Development

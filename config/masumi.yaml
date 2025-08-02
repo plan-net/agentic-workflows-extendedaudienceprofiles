@@ -10,14 +10,62 @@ agents:
 
   - name: "audience-insights-gwi"
     endpoint: "http://138.68.88.241:8000/Audience%20Insights%20GWI"  
-    description: "Global Web Index audience insights"
+    description: "Global Web Index (GWI) consumer research platform providing deep audience insights from survey data of millions of consumers worldwide"
     price: 3.0  # Expected cost per job in USDM
     max_total_spend: 9.0  # Optional: can call this agent until 9.0 USDM is spent
     enabled: true
+    capabilities:
+      - "Access to 250K+ consumer profiling points including demographics, psychographics, and behaviors"
+      - "Country-specific data for 50+ markets including US, UK, Germany, Japan, Brazil, etc."
+      - "Demographic segmentation by age (16-64), gender, income level, education, and location"
+      - "Consumer attitudes, brand affinity, purchase intent, and lifestyle data"
+      - "Media consumption habits, device usage, and online behavior patterns"
+      - "Industry-specific insights for retail, finance, travel, technology, and more"
+    best_for: "Deep demographic analysis, consumer behavior patterns, brand perception, market-specific insights"
+    example_prompts:
+      - "What are the shopping habits and brand preferences of millennial women (ages 25-35) in the United States with household income above $75,000?"
+      - "Analyze the sustainability attitudes and eco-friendly purchasing behaviors of Gen Z consumers (ages 18-24) across Western Europe, particularly in Germany, France, and the UK"
+      - "What are the financial services usage patterns and investment attitudes of high-income professionals (age 35-50) in Asian markets, specifically Singapore, Hong Kong, and Japan?"
     
   - name: "advanced-web-research"
     endpoint: "http://138.68.88.241:8000/Advanced%20Web%20Research"
-    description: "Advanced web research agent for comprehensive web research"
+    description: "Comprehensive web research agent that searches, analyzes, and synthesizes information from across the internet with source citations"
     price: 2.5  # Expected cost per job in USDM
     # No max_total_spend means only limited by total_budget
     enabled: true
+    capabilities:
+      - "Real-time web search across millions of sources including news, blogs, research papers, and reports"
+      - "Statistical data gathering from authoritative sources and industry reports"
+      - "Trend analysis and pattern identification from multiple data points"
+      - "Expert opinion aggregation from thought leaders and industry publications"
+      - "Competitive analysis and market research capabilities"
+      - "Always provides source citations and links for verification"
+      - "Can focus research on specific time periods (e.g., 'last 6 months', '2023-2024')"
+    best_for: "Current trends, market statistics, competitive analysis, expert opinions, emerging patterns, fact-checking"
+    example_prompts:
+      - "What are the latest trends in sustainable furniture design and which brands are leading innovation in eco-friendly materials for nursery furniture?"
+      - "Research the current market size and growth projections for baby furniture in North America, including key statistics on spending patterns for first-time parents"
+      - "Find expert opinions and consumer reviews about the most important safety features parents look for when purchasing cribs and changing tables"
+    
+  - name: "ask-the-crowd"
+    endpoint: "http://138.68.88.241:8000/Ask%20The%20Crowd"
+    description: "Crowd-sourced opinion gathering agent that collects real-time responses from diverse participants on specific statements or questions"
+    price: 1.5  # Expected cost per job in USDM
+    max_total_spend: 5.0  # Limit spending on crowd surveys
+    enabled: true
+    capabilities:
+      - "Gather opinions from 50-100+ real people per question"
+      - "Binary choice questions (Agree/Disagree, Yes/No)"
+      - "Multiple choice questions with 2-5 options"
+      - "Demographic diversity in respondents"
+      - "Quick turnaround for opinion polling"
+      - "Useful for validating assumptions and testing hypotheses"
+    best_for: "Opinion validation, preference testing, quick polls, assumption checking, sentiment analysis"
+    limitations:
+      - "Requires specific format: statement + options array"
+      - "Options must be provided as an array of strings"
+      - "Best for simple, clear questions rather than complex analysis"
+    example_prompts:
+      - '{"statement": "When buying furniture for a nursery, safety certifications are more important than aesthetic design", "option": ["Strongly Agree", "Agree", "Neutral", "Disagree", "Strongly Disagree"]}'
+      - '{"statement": "I would pay 20-30% more for baby furniture made from sustainable materials", "option": ["Yes", "No", "Maybe"]}'
+      - '{"statement": "The most important factor when choosing nursery furniture is:", "option": ["Price", "Safety", "Design", "Sustainability", "Brand reputation"]}'
