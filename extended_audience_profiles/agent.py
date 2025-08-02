@@ -183,8 +183,8 @@ async def _handle_job_submission_error(result: Dict[str, Any], items: List[Any],
             await tracer.markdown(f"❌ **Budget exceeded** for {agent_name}")
             if 'budget_info' in result:
                 budget_info = result['budget_info']
-                await tracer.markdown(f"   - Expected cost: {budget_info.get('expected_cost', 0):.1f} ADA")
-                await tracer.markdown(f"   - Agent remaining: {budget_info.get('remaining', 0):.1f} ADA")
+                await tracer.markdown(f"   - Expected cost: {budget_info.get('expected_cost', 0):.1f} USDM")
+                await tracer.markdown(f"   - Agent remaining: {budget_info.get('remaining', 0):.1f} USDM")
         elif 'ask-the-crowd' in str(agent_name) and 'array for option field' in error_msg:
             await tracer.markdown(f"⚠️ Skipped {agent_name}: requires array format for options")
         else:
@@ -289,9 +289,9 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             # Show initial budget info
             budget_summary = BudgetManager.get_budget_summary(budget_ref)
             await tracer.markdown(f"💰 **Budget Information**")
-            await tracer.markdown(f"- Total Budget: {budget_summary['total_budget']:.1f} ADA")
-            await tracer.markdown(f"- Already Spent: {budget_summary['total_spent']:.1f} ADA")
-            await tracer.markdown(f"- Available: {budget_summary['total_remaining']:.1f} ADA")
+            await tracer.markdown(f"- Total Budget: {budget_summary['total_budget']:.1f} USDM")
+            await tracer.markdown(f"- Already Spent: {budget_summary['total_spent']:.1f} USDM")
+            await tracer.markdown(f"- Available: {budget_summary['total_remaining']:.1f} USDM")
             await tracer.markdown("")
             await tracer.markdown("🤖 Running orchestrator agent...")
         orchestrator_prompt = f"""
@@ -344,17 +344,17 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     expected_cost = budget_info.get('expected_cost', 0)
                     
                     await tracer.markdown(f"💸 Submitted to **{task.agent_name}**:")
-                    await tracer.markdown(f"   - Cost: {actual_cost:.1f} ADA")
+                    await tracer.markdown(f"   - Cost: {actual_cost:.1f} USDM")
                     
                     # Warn if actual price differs from expected
                     if expected_cost > 0 and abs(actual_cost - expected_cost) > 0.01:
                         price_diff_pct = ((actual_cost - expected_cost) / expected_cost) * 100
                         if actual_cost > expected_cost:
-                            await tracer.markdown(f"   - ⚠️ **Price higher than expected**: {actual_cost:.1f} ADA (expected {expected_cost:.1f} ADA, +{price_diff_pct:.0f}%)")
+                            await tracer.markdown(f"   - ⚠️ **Price higher than expected**: {actual_cost:.1f} USDM (expected {expected_cost:.1f} USDM, +{price_diff_pct:.0f}%)")
                         else:
-                            await tracer.markdown(f"   - ✅ **Price lower than expected**: {actual_cost:.1f} ADA (expected {expected_cost:.1f} ADA, {price_diff_pct:.0f}%)")
+                            await tracer.markdown(f"   - ✅ **Price lower than expected**: {actual_cost:.1f} USDM (expected {expected_cost:.1f} USDM, {price_diff_pct:.0f}%)")
                     
-                    await tracer.markdown(f"   - Remaining budget: {budget_info.get('total_remaining', 0):.1f} ADA")
+                    await tracer.markdown(f"   - Remaining budget: {budget_info.get('total_remaining', 0):.1f} USDM")
             
             # Handle failed task submission
             elif not result.get('success'):
@@ -418,16 +418,16 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             # Show final budget summary
             final_budget = BudgetManager.get_budget_summary(budget_ref)
             await tracer.markdown("\n💰 **Final Budget Summary**")
-            await tracer.markdown(f"- Initial Budget: {final_budget['total_budget']:.1f} ADA")
-            await tracer.markdown(f"- Total Spent: {final_budget['total_spent']:.1f} ADA")
-            await tracer.markdown(f"- Remaining: {final_budget['total_remaining']:.1f} ADA")
+            await tracer.markdown(f"- Initial Budget: {final_budget['total_budget']:.1f} USDM")
+            await tracer.markdown(f"- Total Spent: {final_budget['total_spent']:.1f} USDM")
+            await tracer.markdown(f"- Remaining: {final_budget['total_remaining']:.1f} USDM")
             
             # Show per-agent breakdown
             if final_budget['agents']:
                 await tracer.markdown("\n📊 **Per-Agent Spending**")
                 for agent_name, agent_info in final_budget['agents'].items():
                     if agent_info['spent'] > 0:
-                        await tracer.markdown(f"- {agent_name}: {agent_info['spent']:.1f} ADA spent")
+                        await tracer.markdown(f"- {agent_name}: {agent_info['spent']:.1f} USDM spent")
             
             # Show cost accuracy if available
             if final_budget.get('cost_accuracy'):

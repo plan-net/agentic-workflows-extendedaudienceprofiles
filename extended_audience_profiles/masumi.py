@@ -222,6 +222,7 @@ class MasumiClient:
             result = await purchase.create_purchase_request()
             
             # Calculate cost but don't record here - that's handled by the caller
+            # Convert from lovelace to USDM: 1 USDM = 1,000,000 lovelace
             amounts = job_response.get('amounts', [])
             cost = amounts[0].get('amount', 0) / 1_000_000 if amounts else 0.0
             
