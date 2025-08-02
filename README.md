@@ -164,11 +164,16 @@ extended-audience-profiles/
 │   ├── query.py              # Kodosumi service wrapper
 │   ├── masumi.py             # Masumi Network client
 │   ├── tools.py              # OpenAI function tools
-│   ├── state.py              # Ray-based state management
+│   ├── state.py              # Simplified Ray-based state management
 │   ├── background.py         # Async polling logic
 │   ├── storage.py            # Result persistence
-│   ├── token_utils.py        # Token counting/budgeting
-│   └── truncation.py         # Smart content truncation
+│   ├── context_management.py # Token counting and truncation
+│   ├── formatting.py         # Result formatting utilities
+│   ├── errors.py             # Error handling utilities
+│   └── prompts/              # Agent prompt templates
+│       ├── orchestrator.txt
+│       ├── refinement.txt
+│       └── consolidator.txt
 ├── config/
 │   └── masumi.yaml           # Masumi Network configuration
 ├── data/
@@ -182,9 +187,10 @@ extended-audience-profiles/
 - **Orchestrator Agent** (GPT-4): Plans initial research strategy
 - **Refinement Agent** (o3-mini): Analyzes gaps, plans deep dives  
 - **Consolidator Agent** (o3-mini): Synthesizes all findings
-- **Budget Manager**: Ray-based distributed state management
-- **Token Manager**: Context window tracking and truncation
+- **State Manager**: Simplified unified state for jobs and budget tracking
+- **Context Manager**: Unified token counting and smart truncation
 - **Storage System**: Filesystem-based result persistence
+- **Externalized Prompts**: Agent prompts in separate template files
 
 ## 📈 Monitoring
 
