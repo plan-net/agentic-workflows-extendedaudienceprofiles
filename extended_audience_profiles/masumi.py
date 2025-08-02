@@ -181,6 +181,11 @@ class MasumiClient:
             amounts = job_response.get('amounts', [])
             cost = amounts[0].get('amount', 0) / 1_000_000 if amounts else 0.0
             
+            # Debug logging for cost calculation
+            logger.info(f"Cost calculation for {agent_name}:")
+            logger.info(f"  - amounts from job_response: {amounts}")
+            logger.info(f"  - calculated cost: {cost} USDM")
+            
             return {
                 'success': True,
                 'job_id': job_response['job_id'],
