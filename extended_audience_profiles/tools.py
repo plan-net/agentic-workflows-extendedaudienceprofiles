@@ -175,6 +175,8 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
     Returns:
         Dict containing job_id and submission status (not the result)
     """
+    global _budget_ref
+    
     try:
         client = MasumiClient(budget_ref=_budget_ref)
         
@@ -210,7 +212,6 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                 }
             
             # Update global budget ref
-            global _budget_ref
             _budget_ref = new_budget_ref
         
         # Step 1: Start the job
