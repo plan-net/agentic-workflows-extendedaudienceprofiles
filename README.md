@@ -45,25 +45,36 @@ An advanced AI-powered audience research system that leverages the Masumi Networ
    pip install -e .
    ```
 
-2. **Configure Masumi Network**:
+2. **Create environment file**:
    ```bash
-   # Copy and configure Masumi settings
-   cp config/masumi.yaml.example config/masumi.yaml
-   # Edit config/masumi.yaml with your Masumi API credentials
+   # Copy example and add your credentials
+   cp .env.example .env
+   # Edit .env to add your Masumi API credentials:
+   # PAYMENT_SERVICE_URL=your_masumi_payment_url
+   # PAYMENT_API_KEY=your_masumi_api_key
    ```
 
-3. **Set environment variables**:
+3. **Configure kodosumi deployment**:
    ```bash
-   echo "PAYMENT_SERVICE_URL=your_masumi_payment_url" >> .env
-   echo "PAYMENT_API_KEY=your_masumi_api_key" >> .env
+   # Copy and configure deployment settings
+   cp data/config/extended_audience_profiles.yaml.example data/config/extended_audience_profiles.yaml
+   # Edit data/config/extended_audience_profiles.yaml to add:
+   # - Your OpenAI API key
+   # - Your Masumi registry and payment service credentials
    ```
 
-4. **Start the service**:
+4. **Configure Masumi settings** (optional - defaults are usually fine):
+   ```bash
+   # The config/masumi.yaml can be used as-is for most cases
+   # Only edit if you need custom budget limits or agent settings
+   ```
+
+5. **Start the service**:
    ```bash
    just start  # Starts Ray, deploys service, launches UI
    ```
 
-5. **Access the admin panel**:
+6. **Access the admin panel**:
    Open `http://localhost:3370` in your browser
 
 ## 📊 How It Works

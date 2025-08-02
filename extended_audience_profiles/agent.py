@@ -129,7 +129,7 @@ refinement_agent = Agent(
     - Each job should have a clear purpose based on initial findings
     - Explain your reasoning for each follow-up research
     """,
-    model="gpt-4o",
+    model="o3-mini",
     tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
 )
 

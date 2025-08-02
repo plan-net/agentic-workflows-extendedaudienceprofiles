@@ -132,6 +132,10 @@ data/*.json
 data/*.csv
 !data/examples/
 
+# Execution and results data
+data/execution/
+data/results/
+
 # Cache
 .cache/
 __pycache__/
