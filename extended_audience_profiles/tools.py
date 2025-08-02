@@ -7,7 +7,6 @@ from .masumi import MasumiClient
 from .state import StateManager
 import ray
 import logging
-from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -21,62 +20,6 @@ def set_state_ref(state_ref: ray.ObjectRef) -> None:
     logger.info("State reference set for tools")
 
 
-# Pydantic models for strict schema compliance
-class AgentInfo(BaseModel):
-    name: str
-    description: str
-    endpoint: str
-    budget_remaining: float
-    budget_spent: float
-    max_budget: str
-
-
-class ListAgentsResponse(BaseModel):
-    success: bool
-    total_budget: float
-    total_spent: float
-    total_remaining: float
-    available_agents: List[AgentInfo]
-    error: Optional[str] = None
-
-
-class SchemaProperty(BaseModel):
-    type: str
-    description: str
-    example: Optional[str] = None
-    enum: Optional[List[str]] = None
-    minimum: Optional[float] = None
-    maximum: Optional[float] = None
-    minLength: Optional[int] = None
-    maxLength: Optional[int] = None
-
-
-class SchemaResponse(BaseModel):
-    success: bool
-    agent_name: Optional[str] = None
-    schema: Optional[Dict[str, Any]] = None  # Still need Any for nested schema
-    instructions: Optional[str] = None
-    error: Optional[str] = None
-
-
-class BudgetInfo(BaseModel):
-    job_cost: str
-    agent_remaining: float
-    total_remaining: float
-    agent_spent: Optional[float] = None
-    total_spent: Optional[float] = None
-    remaining: Optional[float] = None
-
-
-class JobExecutionResponse(BaseModel):
-    success: bool
-    job_id: Optional[str] = None
-    agent_name: Optional[str] = None
-    result: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    budget_info: Optional[BudgetInfo] = None
-    error: Optional[str] = None
-    error_type: Optional[str] = None
 
 
 @function_tool

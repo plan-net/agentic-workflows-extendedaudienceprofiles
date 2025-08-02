@@ -15,6 +15,68 @@ from .storage import storage
 logger = logging.getLogger(__name__)
 
 
+async def _process_task_status(task, status_result, job_id, tracer=None):
+    """Process a single task status result and return update if needed."""
+    task_update = None
+    
+    # Show status in tracer
+    if tracer:
+        task_status = status_result.get('status', 'unknown')
+        await tracer.markdown(f"📊 Task {task.id[:8]}... status: **{task_status}**")
+    
+    if status_result['status'] == 'completed':
+        # Task completed successfully
+        result_content = status_result.get('result', '')
+        
+        task_update = {
+            'task_id': task.id,
+            'status': 'completed',
+            'result': result_content
+        }
+        
+        logger.info(f"Agent task {task.id} completed successfully")
+        logger.info(f"Result preview: {result_content[:200]}..." if len(result_content) > 200 else f"Result: {result_content}")
+        
+        # Save result to filesystem
+        try:
+            hash_fields = {k: v for k, v in status_result.items() if 'hash' in k.lower()}
+            
+            metadata = {
+                'input_data': task.input_data if hasattr(task, 'input_data') else {},
+                'started_at': task.started_at,
+                'completed_at': time.time(),
+                'duration': time.time() - task.started_at if task.started_at else None,
+            }
+            
+            if hash_fields:
+                metadata['hashes'] = hash_fields
+                logger.info(f"Found hash fields in completed job {task.id}: {hash_fields}")
+            
+            await storage.save_agent_result(
+                job_id=job_id,
+                masumi_job_id=task.id,
+                agent_name=task.agent_name,
+                content=result_content,
+                metadata=metadata
+            )
+        except Exception as e:
+            logger.error(f"Failed to save agent result to storage: {str(e)}")
+    
+    elif status_result['status'] == 'failed':
+        # Task failed
+        error_msg = status_result.get('result', status_result.get('message', 'Unknown error'))
+        
+        task_update = {
+            'task_id': task.id,
+            'status': 'failed',
+            'error': error_msg
+        }
+        
+        logger.error(f"Agent task {task.id} failed: {error_msg}")
+    
+    return task_update
+
+
 @ray.remote
 def poll_masumi_jobs(state_ref: ray.ObjectRef, job_id: str) -> ray.ObjectRef:
     """
@@ -107,65 +169,10 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
                 logger.debug(f"Polling status for job {task.id} from agent {task.agent_name}")
                 status_result = await client.poll_job_status(task.id, task.agent_name)
                 
-                # Show the exact status in tracer - single line
-                if tracer:
-                    task_status = status_result.get('status', 'unknown')
-                    await tracer.markdown(f"📊 Task {task.id[:8]}... status: **{task_status}**")
-                
-                if status_result['status'] == 'completed':
-                    # Task completed successfully
-                    result_content = status_result.get('result', '')
-                    
-                    # Collect update for batch processing
-                    task_updates.append({
-                        'task_id': task.id,
-                        'status': 'completed',
-                        'result': result_content
-                    })
-                    
-                    logger.info(f"Agent task {task.id} completed successfully")
-                    logger.info(f"Result preview: {result_content[:200]}..." if len(result_content) > 200 else f"Result: {result_content}")
-                    
-                    # Save result to filesystem (can be done independently)
-                    try:
-                        # Extract any hash fields from the status result
-                        hash_fields = {k: v for k, v in status_result.items() if 'hash' in k.lower()}
-                        
-                        metadata = {
-                            'input_data': task.input_data,
-                            'started_at': task.started_at,
-                            'completed_at': time.time(),
-                            'duration': time.time() - task.started_at if task.started_at else None,
-                            # 'round': task.round  # Removed - not part of new Task model
-                        }
-                        
-                        # Add any hash fields found in the response
-                        if hash_fields:
-                            metadata['hashes'] = hash_fields
-                            logger.info(f"Found hash fields in completed job {task.id}: {hash_fields}")
-                        
-                        await storage.save_agent_result(
-                            job_id=job_id,
-                            masumi_job_id=task.id,
-                            agent_name=task.agent_name,
-                            content=result_content,
-                            metadata=metadata
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to save agent result to storage: {str(e)}")
-                    
-                elif status_result['status'] == 'failed':
-                    # Task failed
-                    error_msg = status_result.get('result', status_result.get('message', 'Unknown error'))
-                    
-                    # Collect update for batch processing
-                    task_updates.append({
-                        'task_id': task.id,
-                        'status': 'failed',
-                        'error': error_msg
-                    })
-                    
-                    logger.error(f"Agent task {task.id} failed: {error_msg}")
+                # Process task status and get update if needed
+                task_update = await _process_task_status(task, status_result, job_id, tracer)
+                if task_update:
+                    task_updates.append(task_update)
                     
             except Exception as e:
                 logger.error(f"Error polling agent task {task.id}: {str(e)}")
@@ -231,41 +238,3 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
     return state_ref
 
 
-@ray.remote
-def poll_single_agent_task(masumi_job_id: str, agent_name: str, timeout: float = 1800.0) -> Dict[str, Any]:
-    """
-    Poll a single agent task until completion. Useful for testing.
-    
-    Args:
-        masumi_job_id: The Masumi job ID to poll
-        agent_name: Name of the agent that's running the task
-        timeout: Maximum time to wait in seconds
-        
-    Returns:
-        Dict with task result or error
-    """
-    return asyncio.run(_poll_single_agent_task_async(masumi_job_id, agent_name, timeout))
-
-
-async def _poll_single_agent_task_async(masumi_job_id: str, agent_name: str, timeout: float) -> Dict[str, Any]:
-    """Async implementation of single agent task polling"""
-    logger.info(f"Polling single agent task {masumi_job_id} from agent {agent_name}")
-    client = MasumiClient()
-    
-    try:
-        result = await client.wait_for_completion(masumi_job_id, agent_name, timeout=timeout)
-        return {
-            "success": True,
-            "masumi_job_id": masumi_job_id,
-            "agent_name": agent_name,
-            "result": result.get('result', ''),
-            "status": result.get('status', 'unknown')
-        }
-    except Exception as e:
-        logger.error(f"Error polling agent task {masumi_job_id}: {str(e)}")
-        return {
-            "success": False,
-            "masumi_job_id": masumi_job_id,
-            "agent_name": agent_name,
-            "error": str(e)
-        }

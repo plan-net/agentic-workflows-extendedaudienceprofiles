@@ -59,6 +59,30 @@ class ResultStorage:
         """Get consolidated directory for a job"""
         return self._get_job_dir(job_id) / "consolidated"
     
+    async def _write_json(self, file_path: Path, data: Dict[str, Any]) -> None:
+        """Write JSON data to file"""
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(json.dumps(data, indent=2))
+    
+    async def _read_json(self, file_path: Path) -> Dict[str, Any]:
+        """Read JSON data from file"""
+        if not file_path.exists():
+            return {}
+        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+            return json.loads(await f.read())
+    
+    async def _write_markdown(self, file_path: Path, content: str) -> None:
+        """Write markdown content to file"""
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.write(content)
+    
+    async def _read_markdown(self, file_path: Path) -> str:
+        """Read markdown content from file"""
+        if not file_path.exists():
+            return ""
+        async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
+            return await f.read()
+    
     async def save_agent_result(
         self,
         job_id: str,
@@ -101,17 +125,15 @@ class ResultStorage:
 """
             
             # Write markdown file
-            async with aiofiles.open(md_file, 'w', encoding='utf-8') as f:
-                await f.write(md_content)
+            await self._write_markdown(md_file, md_content)
             
             # Load existing metadata if it exists
-            existing_metadata = {"agent_name": agent_name, "jobs": []}
-            if json_file.exists():
-                async with aiofiles.open(json_file, 'r', encoding='utf-8') as f:
-                    existing_metadata = json.loads(await f.read())
-                    # Ensure jobs array exists (for backward compatibility)
-                    if 'jobs' not in existing_metadata:
-                        existing_metadata['jobs'] = []
+            existing_metadata = await self._read_json(json_file)
+            if not existing_metadata:
+                existing_metadata = {"agent_name": agent_name, "jobs": []}
+            # Ensure jobs array exists (for backward compatibility)
+            if 'jobs' not in existing_metadata:
+                existing_metadata['jobs'] = []
             
             # Prepare job metadata
             job_metadata = {
@@ -131,8 +153,7 @@ class ResultStorage:
             existing_metadata['jobs'].append(job_metadata)
             
             # Write updated JSON metadata
-            async with aiofiles.open(json_file, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(existing_metadata, indent=2))
+            await self._write_json(json_file, existing_metadata)
             
             logger.info(f"Saved agent result: {md_file}")
             
@@ -185,8 +206,7 @@ class ResultStorage:
 """
             
             # Write profile markdown
-            async with aiofiles.open(profile_file, 'w', encoding='utf-8') as f:
-                await f.write(md_content)
+            await self._write_markdown(profile_file, md_content)
             
             # Prepare summary
             summary = {
@@ -199,8 +219,7 @@ class ResultStorage:
             }
             
             # Write summary JSON
-            async with aiofiles.open(summary_file, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(summary, indent=2))
+            await self._write_json(summary_file, summary)
             
             logger.info(f"Saved consolidated profile: {profile_file}")
             
@@ -230,18 +249,14 @@ class ResultStorage:
             metadata_file = job_dir / "metadata.json"
             
             # Load existing metadata if it exists
-            existing_metadata = {}
-            if metadata_file.exists():
-                async with aiofiles.open(metadata_file, 'r', encoding='utf-8') as f:
-                    existing_metadata = json.loads(await f.read())
+            existing_metadata = await self._read_json(metadata_file)
             
             # Update metadata
             existing_metadata.update(metadata)
             existing_metadata['last_updated'] = datetime.now().isoformat()
             
             # Write metadata
-            async with aiofiles.open(metadata_file, 'w', encoding='utf-8') as f:
-                await f.write(json.dumps(existing_metadata, indent=2))
+            await self._write_json(metadata_file, existing_metadata)
             
         except Exception as e:
             logger.error(f"Error saving submission metadata: {str(e)}")
@@ -257,10 +272,7 @@ class ResultStorage:
         metadata_file = self._get_job_dir(job_id) / "metadata.json"
         
         # Load existing metadata
-        metadata = {}
-        if metadata_file.exists():
-            async with aiofiles.open(metadata_file, 'r', encoding='utf-8') as f:
-                metadata = json.loads(await f.read())
+        metadata = await self._read_json(metadata_file)
         
         # Update agents list
         if 'completed_agents' not in metadata:
@@ -282,10 +294,9 @@ class ResultStorage:
     ) -> None:
         """Update the master index file"""
         # Load existing index
-        index = []
-        if self.index_file.exists():
-            async with aiofiles.open(self.index_file, 'r', encoding='utf-8') as f:
-                index = json.loads(await f.read())
+        index = await self._read_json(self.index_file)
+        if not isinstance(index, list):
+            index = []
         
         # Add or update job entry
         entry = {
@@ -304,8 +315,7 @@ class ResultStorage:
         index.sort(key=lambda x: x['created_at'], reverse=True)
         
         # Write updated index
-        async with aiofiles.open(self.index_file, 'w', encoding='utf-8') as f:
-            await f.write(json.dumps(index, indent=2))
+        await self._write_json(self.index_file, index)
     
     async def get_job_results(self, job_id: str) -> Dict[str, Any]:
         """
@@ -330,18 +340,15 @@ class ResultStorage:
         
         # Load metadata
         metadata_file = job_dir / "metadata.json"
-        if metadata_file.exists():
-            async with aiofiles.open(metadata_file, 'r', encoding='utf-8') as f:
-                results['metadata'] = json.loads(await f.read())
+        results['metadata'] = await self._read_json(metadata_file)
         
         # Load agent results from individual agent directories
         if job_dir.exists():
             for agent_dir in job_dir.iterdir():
                 if agent_dir.is_dir() and agent_dir.name != "consolidated":
                     metadata_file = agent_dir / "metadata.json"
-                    if metadata_file.exists():
-                        async with aiofiles.open(metadata_file, 'r', encoding='utf-8') as f:
-                            agent_metadata = json.loads(await f.read())
+                    agent_metadata = await self._read_json(metadata_file)
+                    if agent_metadata:
                         
                         # Handle new format with jobs array
                         if 'jobs' in agent_metadata:
@@ -360,25 +367,25 @@ class ResultStorage:
                                 
                                 # Load corresponding markdown
                                 md_file = agent_dir / f"{job['masumi_job_id']}.md"
-                                if md_file.exists():
-                                    async with aiofiles.open(md_file, 'r', encoding='utf-8') as f:
-                                        job_result['content'] = await f.read()
+                                content = await self._read_markdown(md_file)
+                                if content:
+                                    job_result['content'] = content
                                 
                                 results['agent_results'].append(job_result)
                         else:
                             # Old format: single job (backward compatibility)
                             md_file = agent_dir / "result.md"
-                            if md_file.exists():
-                                async with aiofiles.open(md_file, 'r', encoding='utf-8') as f:
-                                    agent_metadata['content'] = await f.read()
+                            content = await self._read_markdown(md_file)
+                            if content:
+                                agent_metadata['content'] = content
                             
                             results['agent_results'].append(agent_metadata)
         
         # Load consolidated profile
         profile_file = self._get_consolidated_dir(job_id) / "profile.md"
-        if profile_file.exists():
-            async with aiofiles.open(profile_file, 'r', encoding='utf-8') as f:
-                results['consolidated_profile'] = await f.read()
+        content = await self._read_markdown(profile_file)
+        if content:
+            results['consolidated_profile'] = content
         
         return results
     
@@ -389,11 +396,8 @@ class ResultStorage:
         Returns:
             List of job summaries
         """
-        if not self.index_file.exists():
-            return []
-        
-        async with aiofiles.open(self.index_file, 'r', encoding='utf-8') as f:
-            return json.loads(await f.read())
+        index = await self._read_json(self.index_file)
+        return index if isinstance(index, list) else []
 
 
 # Singleton instance

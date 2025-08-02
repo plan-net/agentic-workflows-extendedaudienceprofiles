@@ -1,21 +1,38 @@
-"""Smart truncation strategies for managing large research results."""
-
+"""
+Context window management - token counting and truncation strategies
+"""
 import re
+import tiktoken
 from enum import Enum
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 import logging
 
-from .token_utils import TokenCounter
-
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class TokenBudget:
+    """Manages token budget for model context windows."""
+    total_tokens: int
+    system_tokens: int = 5000  # Reserved for system prompt and instructions
+    output_buffer: int = 5000  # Reserved for model output
+    safety_margin: int = 10000  # Safety buffer to prevent edge cases
+    
+    @property
+    def available_tokens(self) -> int:
+        """Calculate tokens available for research results."""
+        return self.total_tokens - self.system_tokens - self.output_buffer - self.safety_margin
+    
+    @property
+    def reserved_tokens(self) -> int:
+        """Total reserved tokens."""
+        return self.system_tokens + self.output_buffer + self.safety_margin
 
 
 class TruncationStrategy(Enum):
     """Available truncation strategies."""
     PROPORTIONAL = "proportional"  # Each result gets proportional share
-    PRIORITY_BASED = "priority"  # Prioritize certain agents/results
-    SUMMARY_FALLBACK = "summary"  # Fall back to summaries for large results
     SMART_SECTIONS = "smart"  # Remove less important sections first
 
 
@@ -30,8 +47,28 @@ class TruncationResult:
     sections_removed: List[str] = None
 
 
-class SmartTruncator:
-    """Handles intelligent truncation of research results."""
+class ContextManager:
+    """Unified context window management - handles token counting and truncation."""
+    
+    # Model to context window mapping
+    MODEL_CONTEXT_WINDOWS = {
+        "o3-mini": 200000,
+        "gpt-4": 8192,
+        "gpt-4-32k": 32768,
+        "gpt-4-turbo": 128000,
+        "gpt-4o": 128000,
+        "gpt-4o-mini": 128000,
+    }
+    
+    # Model to encoding mapping (for tiktoken)
+    MODEL_ENCODINGS = {
+        "o3-mini": "cl100k_base",  # Using GPT-4 encoding as approximation
+        "gpt-4": "cl100k_base",
+        "gpt-4-32k": "cl100k_base",
+        "gpt-4-turbo": "cl100k_base",
+        "gpt-4o": "cl100k_base",
+        "gpt-4o-mini": "cl100k_base",
+    }
     
     # Section patterns to identify different parts of content
     SECTION_PATTERNS = {
@@ -57,7 +94,90 @@ class SmartTruncator:
     
     def __init__(self, model: str = "o3-mini"):
         self.model = model
-        self.counter = TokenCounter()
+        self._encoders = {}
+    
+    def get_encoder(self, model: str) -> tiktoken.Encoding:
+        """Get or create encoder for a model."""
+        encoding_name = self.MODEL_ENCODINGS.get(model, "cl100k_base")
+        
+        if encoding_name not in self._encoders:
+            self._encoders[encoding_name] = tiktoken.get_encoding(encoding_name)
+        
+        return self._encoders[encoding_name]
+    
+    def estimate_tokens(self, text: str, model: str = None) -> int:
+        """Estimate token count for a given text and model."""
+        if model is None:
+            model = self.model
+            
+        if not text:
+            return 0
+        
+        try:
+            encoder = self.get_encoder(model)
+            tokens = encoder.encode(text)
+            return len(tokens)
+        except Exception as e:
+            logger.warning(f"Error counting tokens with tiktoken: {e}. Using approximation.")
+            # Fallback: approximate 1 token ≈ 4 characters
+            return len(text) // 4
+    
+    def get_context_window(self, model: str = None) -> int:
+        """Get context window size for a model."""
+        if model is None:
+            model = self.model
+        return self.MODEL_CONTEXT_WINDOWS.get(model, 128000)  # Default to GPT-4 size
+    
+    def get_token_budget(self, model: str = None) -> TokenBudget:
+        """Get token budget for a model."""
+        if model is None:
+            model = self.model
+        total_tokens = self.get_context_window(model)
+        return TokenBudget(total_tokens=total_tokens)
+    
+    def analyze_results_tokens(self, results: Dict[str, Dict]) -> Tuple[Dict[str, int], int]:
+        """
+        Analyze token usage for research results.
+        
+        Returns:
+            Tuple of (per_result_tokens, total_tokens)
+        """
+        per_result_tokens = {}
+        total_tokens = 0
+        
+        for job_id, data in results.items():
+            result_text = data.get('result', '')
+            tokens = self.estimate_tokens(result_text)
+            per_result_tokens[job_id] = tokens
+            total_tokens += tokens
+            
+            logger.debug(f"Job {job_id}: {tokens} tokens")
+        
+        return per_result_tokens, total_tokens
+    
+    def check_token_fit(self, results: Dict[str, Dict]) -> Tuple[bool, Dict[str, any]]:
+        """
+        Check if results fit within model's context window.
+        
+        Returns:
+            Tuple of (fits_in_context, metadata)
+        """
+        budget = self.get_token_budget()
+        per_result_tokens, total_tokens = self.analyze_results_tokens(results)
+        
+        fits = total_tokens <= budget.available_tokens
+        
+        metadata = {
+            'total_tokens': total_tokens,
+            'available_tokens': budget.available_tokens,
+            'total_context': budget.total_tokens,
+            'reserved_tokens': budget.reserved_tokens,
+            'percentage_used': (total_tokens / budget.available_tokens * 100) if budget.available_tokens > 0 else 0,
+            'fits_in_context': fits,
+            'per_result_tokens': per_result_tokens
+        }
+        
+        return fits, metadata
     
     def truncate_results(
         self,
@@ -73,12 +193,8 @@ class SmartTruncator:
         """
         if strategy == TruncationStrategy.PROPORTIONAL:
             return self._truncate_proportional(results, token_budget)
-        elif strategy == TruncationStrategy.SMART_SECTIONS:
+        else:  # SMART_SECTIONS
             return self._truncate_smart_sections(results, token_budget)
-        elif strategy == TruncationStrategy.SUMMARY_FALLBACK:
-            return self._truncate_with_summary(results, token_budget)
-        else:
-            return self._truncate_priority_based(results, token_budget)
     
     def _truncate_proportional(
         self,
@@ -91,7 +207,7 @@ class SmartTruncator:
         
         # Calculate total tokens
         total_tokens = sum(
-            self.counter.estimate_tokens(data.get('result', ''), self.model)
+            self.estimate_tokens(data.get('result', ''))
             for data in results.values()
         )
         
@@ -101,8 +217,8 @@ class SmartTruncator:
                 truncated_results[job_id] = data.copy()
                 truncation_metadata[job_id] = TruncationResult(
                     truncated_text=data.get('result', ''),
-                    original_tokens=self.counter.estimate_tokens(data.get('result', ''), self.model),
-                    truncated_tokens=self.counter.estimate_tokens(data.get('result', ''), self.model),
+                    original_tokens=self.estimate_tokens(data.get('result', '')),
+                    truncated_tokens=self.estimate_tokens(data.get('result', '')),
                     was_truncated=False,
                     strategy_used=TruncationStrategy.PROPORTIONAL
                 )
@@ -111,7 +227,7 @@ class SmartTruncator:
         # Calculate proportional budget for each result
         for job_id, data in results.items():
             result_text = data.get('result', '')
-            original_tokens = self.counter.estimate_tokens(result_text, self.model)
+            original_tokens = self.estimate_tokens(result_text)
             
             # Proportional share of budget
             result_budget = int((original_tokens / total_tokens) * token_budget)
@@ -125,7 +241,7 @@ class SmartTruncator:
             truncation_metadata[job_id] = TruncationResult(
                 truncated_text=truncated_text,
                 original_tokens=original_tokens,
-                truncated_tokens=self.counter.estimate_tokens(truncated_text, self.model),
+                truncated_tokens=self.estimate_tokens(truncated_text),
                 was_truncated=len(truncated_text) < len(result_text),
                 strategy_used=TruncationStrategy.PROPORTIONAL
             )
@@ -145,7 +261,7 @@ class SmartTruncator:
         
         for job_id, data in results.items():
             result_text = data.get('result', '')
-            original_tokens = self.counter.estimate_tokens(result_text, self.model)
+            original_tokens = self.estimate_tokens(result_text)
             
             # Calculate remaining budget for this result
             remaining_budget = token_budget - current_total
@@ -168,7 +284,7 @@ class SmartTruncator:
                     remaining_budget
                 )
                 
-                truncated_tokens = self.counter.estimate_tokens(truncated_text, self.model)
+                truncated_tokens = self.estimate_tokens(truncated_text)
                 
                 truncated_results[job_id] = data.copy()
                 truncated_results[job_id]['result'] = truncated_text
@@ -200,7 +316,7 @@ class SmartTruncator:
                 # Never remove citations
                 continue
             
-            current_tokens = self.counter.estimate_tokens(working_text, self.model)
+            current_tokens = self.estimate_tokens(working_text)
             if current_tokens <= token_budget:
                 break
             
@@ -219,7 +335,7 @@ class SmartTruncator:
                     sections_removed.append(section)
         
         # If still too long, do hard truncation but preserve ending
-        if self.counter.estimate_tokens(working_text, self.model) > token_budget:
+        if self.estimate_tokens(working_text) > token_budget:
             working_text = self._truncate_to_token_limit(working_text, token_budget, preserve_ending=True)
             sections_removed.append('content_truncated')
         
@@ -232,7 +348,7 @@ class SmartTruncator:
         preserve_ending: bool = False
     ) -> str:
         """Truncate text to fit within token limit."""
-        tokens = self.counter.estimate_tokens(text, self.model)
+        tokens = self.estimate_tokens(text)
         
         if tokens <= token_limit:
             return text
@@ -250,7 +366,7 @@ class SmartTruncator:
             else:
                 truncated = text[:mid] + "\n\n[... content truncated ...]"
             
-            truncated_tokens = self.counter.estimate_tokens(truncated, self.model)
+            truncated_tokens = self.estimate_tokens(truncated)
             
             if truncated_tokens <= token_limit:
                 best_length = mid
@@ -262,22 +378,16 @@ class SmartTruncator:
             return text[:best_length//2] + "\n\n[... content truncated ...]\n\n" + text[-(best_length//2):]
         else:
             return text[:best_length] + "\n\n[... content truncated ...]"
+
+
+def format_token_summary(metadata: Dict[str, any]) -> str:
+    """Format token metadata for display."""
+    lines = []
+    lines.append(f"Total tokens: {metadata['total_tokens']:,}")
+    lines.append(f"Available budget: {metadata['available_tokens']:,}")
+    lines.append(f"Usage: {metadata['percentage_used']:.1f}%")
     
-    def _truncate_with_summary(
-        self,
-        results: Dict[str, Dict],
-        token_budget: int
-    ) -> Tuple[Dict[str, Dict], Dict[str, TruncationResult]]:
-        """Truncate by replacing large results with summaries."""
-        # This would require AI summarization - for now, fall back to smart sections
-        logger.info("Summary truncation not yet implemented, using smart sections instead")
-        return self._truncate_smart_sections(results, token_budget)
+    if not metadata['fits_in_context']:
+        lines.append("⚠️ EXCEEDS CONTEXT WINDOW")
     
-    def _truncate_priority_based(
-        self,
-        results: Dict[str, Dict],
-        token_budget: int
-    ) -> Tuple[Dict[str, Dict], Dict[str, TruncationResult]]:
-        """Truncate based on agent priority."""
-        # For now, use proportional as default
-        return self._truncate_proportional(results, token_budget)
+    return "\n".join(lines)

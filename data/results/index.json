@@ -1,5 +1,12 @@
 [
   {
+    "job_id": "8bd47f08-272d-403d-ae9c-4ebac3eeafaf",
+    "audience_description": "men over 50 who buy expensive sport cars",
+    "created_at": 1754146151.923558,
+    "total_agents": 6,
+    "status": "completed"
+  },
+  {
     "job_id": "bcce4760-1e5f-4dfe-abc1-0d8eee7365cb",
     "audience_description": "millenials expectations and purchase behavior when it comes ot insurance products",
     "created_at": 1754120084.7501981,
