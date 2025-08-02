@@ -1,6 +1,6 @@
 # Budget Configuration
 budget:
-  total_budget: 50.0  # Total budget across all agents
+  total_budget: 20.0  # Total budget across all agents
   network: "Preprod"  # Network for Masumi transactions (Preprod/Mainnet)
   
 # Available agents configuration
@@ -10,7 +10,7 @@ agents:
     endpoint: "http://138.68.88.241:8000/Audience%20Insights%20GWI"  
     description: "Global Web Index audience insights"
     price: 3.0  # Expected cost per job in ADA
-    max_total_spend: 20.0  # Optional: can call this agent until 20.0 is spent
+    max_total_spend: 9.0  # Optional: can call this agent until 20.0 is spent
     enabled: true
     
   - name: "advanced-web-research"
