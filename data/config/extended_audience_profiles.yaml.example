@@ -12,3 +12,7 @@ runtime_env:
     MASUMI_REGISTRY_API_KEY: <-- your-registry-api-key -->
     MASUMI_PAYMENT_SERVICE_URL: <-- your-payment-service-url -->
     MASUMI_PAYMENT_API_KEY: <-- your-payment-api-key -->
+    # Storage configuration
+    RESULTS_STORAGE_DIR: "data/results"
+    RESULTS_KEEP_DAYS: "90"
+    RESULTS_COMPRESS_AFTER_DAYS: "30"

@@ -1,0 +1,23 @@
+[
+  {
+    "job_id": "dc26b2d6-9eae-4121-ace8-65926b1d50a6",
+    "audience_description": "millenials interested in sport",
+    "created_at": 1754112021.563877,
+    "total_agents": 3,
+    "status": "completed"
+  },
+  {
+    "submission_id": "test-submission-123",
+    "audience_description": "Test audience",
+    "created_at": 1234567890.0,
+    "total_jobs": 1,
+    "status": "completed"
+  },
+  {
+    "job_id": "test-job-execution-456",
+    "audience_description": "Millennials interested in sustainable fashion",
+    "created_at": 1234567890.0,
+    "total_agents": 2,
+    "status": "completed"
+  }
+]

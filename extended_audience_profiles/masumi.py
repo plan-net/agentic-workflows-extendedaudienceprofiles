@@ -5,6 +5,7 @@ Handles all Masumi Network interactions including agent discovery, job managemen
 import os
 import yaml
 import asyncio
+import json
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 from masumi import Config, Purchase
@@ -228,6 +229,32 @@ class MasumiClient:
         
         data = response.json()
         data.setdefault('job_id', job_id)
+        
+        # Debug logging to see all fields in the response
+        logger.debug(f"Status response for job {job_id} from agent {agent_name}:")
+        logger.debug(f"  Status: {data.get('status', 'unknown')}")
+        logger.debug(f"  Full response fields: {list(data.keys())}")
+        
+        # Log specific fields that might contain hashes
+        if 'hash' in data:
+            logger.info(f"  Hash found: {data['hash']}")
+        if 'input_hash' in data:
+            logger.info(f"  Input hash found: {data['input_hash']}")
+        if 'output_hash' in data:
+            logger.info(f"  Output hash found: {data['output_hash']}")
+        if 'decision_log_hash' in data:
+            logger.info(f"  Decision log hash found: {data['decision_log_hash']}")
+        
+        # Log any field containing 'hash' in its name
+        hash_fields = {k: v for k, v in data.items() if 'hash' in k.lower()}
+        if hash_fields:
+            logger.info(f"  Hash-related fields: {hash_fields}")
+        
+        # If status is completed, log additional details
+        if data.get('status') == 'completed':
+            logger.debug(f"  Job completed - checking for final hash fields")
+            logger.debug(f"  All response data: {json.dumps(data, indent=2)}")
+        
         return data
     
     async def wait_for_completion(self, job_id: str, agent_name: str, poll_interval: float = 2.0, timeout: float = 300.0) -> Dict[str, Any]:

@@ -107,7 +107,7 @@ async def run_profile_generation(inputs: dict, tracer: Tracer):
     # Add metadata footer
     formatted_result += "\n\n---\n"
     formatted_result += f"*Generated via Masumi Network*\n"
-    formatted_result += f"- Submission ID: `{metadata.get('submission_id', 'N/A')}`\n"
+    formatted_result += f"- Job ID: `{metadata.get('job_id', 'N/A')}`\n"
     
     if metadata:
         formatted_result += f"- Total Jobs: {metadata.get('total_jobs', 'N/A')}\n"

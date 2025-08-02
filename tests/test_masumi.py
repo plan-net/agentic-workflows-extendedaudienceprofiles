@@ -3,6 +3,7 @@ Unit tests for Masumi integration module.
 """
 import pytest
 import asyncio
+import os
 from unittest.mock import Mock, patch, AsyncMock, mock_open
 from extended_audience_profiles.masumi import MasumiClient
 
@@ -10,30 +11,32 @@ from extended_audience_profiles.masumi import MasumiClient
 class TestMasumiClient:
     """Tests for MasumiClient class."""
     
+    @patch.dict(os.environ, {
+        'MASUMI_REGISTRY_SERVICE_URL': 'https://registry.masumi.network/api/v1',
+        'MASUMI_REGISTRY_API_KEY': 'test_registry_key',
+        'MASUMI_PAYMENT_SERVICE_URL': 'https://payment.masumi.network/api/v1',
+        'MASUMI_PAYMENT_API_KEY': 'test_payment_key'
+    })
     @patch('builtins.open', new_callable=mock_open, read_data="""
-masumi:
-  registry_service_url: "https://registry.masumi.network/api/v1"
-  registry_api_key: "test_registry_key"
-  payment_service_url: "https://payment.masumi.network/api/v1"
-  payment_api_key: "test_payment_key"
-  budget:
-    daily_limit: 100.0
-    per_request_max: 10.0
+budget:
+  total_budget: 100.0
+  network: "Preprod"
 
 agents:
   - name: "advanced-web-research"
     endpoint: "https://agent.example.com/advanced-web-research"
     description: "Test agent"
-    max_cost_per_request: 5.0
+    max_total_spend: 50.0
     enabled: true
 """)
     @patch('pathlib.Path.exists', return_value=True)
-    def test_load_config(self, mock_exists, mock_file):
+    @patch('extended_audience_profiles.masumi.MasumiClient._validate_agent_availability')
+    def test_load_config(self, mock_validate, mock_exists, mock_file):
         """Test configuration loading."""
         client = MasumiClient()
         
-        assert client.masumi_config is not None
-        assert client.masumi_config['registry_service_url'] == "https://registry.masumi.network/api/v1"
+        assert client.masumi_sdk_config is not None
+        assert client.budget_config['total_budget'] == 100.0
         assert len(client.agents_config) == 1
         assert client.agents_config[0]['name'] == "advanced-web-research"
     

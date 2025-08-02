@@ -4,11 +4,13 @@ Business logic for Extended Audience Profiles using OpenAI Agents and Masumi Net
 import asyncio
 import json
 import logging
+import time
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
 from .tools import list_available_agents, get_agent_input_schema, execute_agent_job
 from .state import StateManager, Job
 from .background import _poll_masumi_jobs_async
+from .storage import storage
 
 logger = logging.getLogger(__name__)
 
@@ -138,21 +140,21 @@ def _create_error_response(audience_description: str, error: str) -> Dict[str, A
 def _create_success_response(
     audience_description: str,
     profile: str,
-    submission_id: str,
+    job_id: str,
     results: Dict[str, Any],
-    submitted_jobs: List[Dict[str, str]]
+    submitted_tasks: List[Dict[str, str]]
 ) -> Dict[str, Any]:
     """Create a standardized success response with metadata."""
     return {
         "audience_description": audience_description,
         "profile": profile,
         "metadata": {
-            "submission_id": submission_id,
+            "job_id": job_id,
             "total_jobs": results['total_jobs'],
             "completed_jobs": results['completed_jobs'],
             "failed_jobs": results['failed_jobs'],
             "total_duration": results['total_duration'],
-            "jobs_submitted": submitted_jobs,
+            "tasks_submitted": submitted_tasks,
             "orchestrator_agent": orchestrator_agent.name,
             "consolidator_agent": consolidator_agent.name
         },
@@ -178,9 +180,23 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
     try:
         logger.info(f"Starting audience profile generation for: {audience_description}")
         
-        # Create a new submission in Ray state
-        submission_id, submission_ref = StateManager.create_submission(audience_description)
-        logger.info(f"Created submission {submission_id}")
+        # Create a new job execution in Ray state
+        job_id, job_execution_ref = StateManager.create_job_execution(audience_description)
+        logger.info(f"Created job execution {job_id}")
+        
+        # Save initial job metadata
+        try:
+            await storage.save_job_metadata(
+                job_id=job_id,
+                metadata={
+                    'job_id': job_id,
+                    'audience_description': audience_description,
+                    'created_at': time.time(),
+                    'status': 'started'
+                }
+            )
+        except Exception as e:
+            logger.error(f"Failed to save initial job metadata: {str(e)}")
         
         # Phase 1: Run orchestrator to submit jobs
         logger.info("Phase 1: Running orchestrator agent to submit jobs...")
@@ -200,8 +216,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             orchestrator_prompt
         )
         
-        # Extract job IDs from orchestrator's tool calls
-        submitted_jobs = []
+        # Extract agent task IDs from orchestrator's tool calls
+        submitted_tasks = []
         
         # Process tool call outputs from orchestrator
         for i, item in enumerate(orchestrator_result.new_items):
@@ -216,44 +232,44 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             if not isinstance(result, dict):
                 continue
             
-            # Handle successful job submission
+            # Handle successful task submission
             if result.get('success') and result.get('job_id'):
-                job = Job(
-                    job_id=result['job_id'],
+                task = Job(
+                    job_id=result['job_id'],  # This is the Masumi job ID
                     agent_name=result.get('agent_name', 'Unknown'),
                     input_data={}  # We don't need to track input data for display
                 )
-                submission_ref = StateManager.add_job(submission_ref, job)
-                submitted_jobs.append({
-                    "job_id": job.job_id,
-                    "agent": job.agent_name
+                job_execution_ref = StateManager.add_agent_task(job_execution_ref, task)
+                submitted_tasks.append({
+                    "masumi_job_id": task.job_id,
+                    "agent": task.agent_name
                 })
             
-            # Handle failed job submission
+            # Handle failed task submission
             elif not result.get('success'):
                 await _handle_job_submission_error(result, orchestrator_result.new_items, i, tracer)
         
-        if len(submitted_jobs) < 2:
-            raise Exception(f"Orchestrator needs at least 2 successful job submissions, but only got {len(submitted_jobs)}")
+        if len(submitted_tasks) < 2:
+            raise Exception(f"Orchestrator needs at least 2 successful agent task submissions, but only got {len(submitted_tasks)}")
         
-        logger.info(f"Orchestrator submitted {len(submitted_jobs)} jobs")
+        logger.info(f"Orchestrator submitted {len(submitted_tasks)} agent tasks")
         
         if tracer:
-            await tracer.markdown(f"\n✅ **Successfully submitted {len(submitted_jobs)} jobs to Masumi Network**")
-            for job in submitted_jobs:
-                await tracer.markdown(f"  • {job['agent']} [{job['job_id'][:8]}...]")
+            await tracer.markdown(f"\n✅ **Successfully submitted {len(submitted_tasks)} tasks to Masumi Network**")
+            for task in submitted_tasks:
+                await tracer.markdown(f"  • {task['agent']} [{task['masumi_job_id'][:8]}...]")
         
-        # Phase 2: Poll jobs in background
-        logger.info("Phase 2: Starting background polling for job results...")
+        # Phase 2: Poll agent tasks in background
+        logger.info("Phase 2: Starting background polling for agent task results...")
         if tracer:
             await tracer.markdown("\n🔍 **Phase 2: Background Processing**")
             await tracer.markdown("⏳ Polling for results (5-20 minutes)...")
         
         # Run the polling directly in this async context so we can use the tracer
-        final_submission_ref = await _poll_masumi_jobs_async(submission_ref, tracer)
+        final_job_execution_ref = await _poll_masumi_jobs_async(job_execution_ref, tracer)
         
-        # Get the completed submission
-        results = StateManager.get_results(final_submission_ref)
+        # Get the completed job execution results
+        results = StateManager.get_results(final_job_execution_ref)
         
         if not results['is_complete']:
             raise Exception("Not all jobs completed successfully")
@@ -289,13 +305,29 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("✅ Profile synthesis complete")
             await tracer.markdown("\n✨ **Extended audience profile ready!**")
         
+        # Save consolidated profile to filesystem
+        try:
+            await storage.save_consolidated_profile(
+                job_id=job_id,
+                profile_content=consolidator_result.final_output,
+                metadata={
+                    'audience_description': audience_description,
+                    'total_jobs': len(submitted_tasks),
+                    'agent_jobs': submitted_tasks,
+                    'created_at': time.time()
+                }
+            )
+            logger.info(f"Saved consolidated profile for job execution {job_id}")
+        except Exception as e:
+            logger.error(f"Failed to save consolidated profile: {str(e)}")
+        
         # Prepare final response
         return _create_success_response(
             audience_description=audience_description,
             profile=consolidator_result.final_output,
-            submission_id=submission_id,
+            job_id=job_id,
             results=results,
-            submitted_jobs=submitted_jobs
+            submitted_tasks=submitted_tasks
         )
         
     except Exception as e:

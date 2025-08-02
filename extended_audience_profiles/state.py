@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Job:
-    """Individual job information"""
-    job_id: str
+    """Individual Masumi agent task within a job execution"""
+    job_id: str  # Masumi job ID
     agent_name: str
     input_data: Dict[str, Any]
     status: str = "pending"  # pending, running, completed, failed
@@ -25,107 +25,107 @@ class Job:
 
 
 @dataclass
-class JobSubmission:
-    """Container for a group of related jobs"""
-    submission_id: str
+class JobExecution:
+    """Container for a complete job execution with multiple agent tasks"""
+    job_id: str
     audience_description: str
-    jobs: List[Job]
+    agent_tasks: List[Job]  # Individual Masumi agent tasks
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
     
     def is_complete(self) -> bool:
-        """Check if all jobs are complete (either completed or failed)"""
-        return all(job.status in ["completed", "failed"] for job in self.jobs)
+        """Check if all agent tasks are complete (either completed or failed)"""
+        return all(task.status in ["completed", "failed"] for task in self.agent_tasks)
     
-    def get_completed_jobs(self) -> List[Job]:
-        """Get all successfully completed jobs"""
-        return [job for job in self.jobs if job.status == "completed"]
+    def get_completed_tasks(self) -> List[Job]:
+        """Get all successfully completed agent tasks"""
+        return [task for task in self.agent_tasks if task.status == "completed"]
     
-    def get_failed_jobs(self) -> List[Job]:
-        """Get all failed jobs"""
-        return [job for job in self.jobs if job.status == "failed"]
+    def get_failed_tasks(self) -> List[Job]:
+        """Get all failed agent tasks"""
+        return [task for task in self.agent_tasks if task.status == "failed"]
 
 
 class StateManager:
-    """Manages job state in Ray's object store"""
+    """Manages job execution state in Ray's object store"""
     
     @staticmethod
-    def create_submission(audience_description: str) -> tuple[str, ray.ObjectRef]:
-        """Create a new job submission and store in Ray"""
-        submission_id = str(uuid.uuid4())
-        submission = JobSubmission(
-            submission_id=submission_id,
+    def create_job_execution(audience_description: str) -> tuple[str, ray.ObjectRef]:
+        """Create a new job execution and store in Ray"""
+        job_id = str(uuid.uuid4())
+        job_execution = JobExecution(
+            job_id=job_id,
             audience_description=audience_description,
-            jobs=[]
+            agent_tasks=[]
         )
-        ref = ray.put(submission)
-        logger.info(f"Created submission {submission_id} with ref {ref}")
-        return submission_id, ref
+        ref = ray.put(job_execution)
+        logger.info(f"Created job execution {job_id} with ref {ref}")
+        return job_id, ref
     
     @staticmethod
-    def add_job(ref: ray.ObjectRef, job: Job) -> ray.ObjectRef:
-        """Add a job to the submission"""
-        submission = ray.get(ref)
-        submission.jobs.append(job)
-        new_ref = ray.put(submission)
-        logger.info(f"Added job {job.job_id} to submission {submission.submission_id}")
+    def add_agent_task(ref: ray.ObjectRef, task: Job) -> ray.ObjectRef:
+        """Add an agent task to the job execution"""
+        job_execution = ray.get(ref)
+        job_execution.agent_tasks.append(task)
+        new_ref = ray.put(job_execution)
+        logger.info(f"Added agent task {task.job_id} to job execution {job_execution.job_id}")
         return new_ref
     
     @staticmethod
-    def update_job_status(ref: ray.ObjectRef, job_id: str, status: str, 
+    def update_task_status(ref: ray.ObjectRef, task_id: str, status: str, 
                           result: Any = None, error: str = None) -> ray.ObjectRef:
-        """Update the status of a specific job"""
-        submission = ray.get(ref)
+        """Update the status of a specific agent task"""
+        job_execution = ray.get(ref)
         
-        for job in submission.jobs:
-            if job.job_id == job_id:
-                job.status = status
-                if status == "running" and job.started_at is None:
-                    job.started_at = time.time()
+        for task in job_execution.agent_tasks:
+            if task.job_id == task_id:
+                task.status = status
+                if status == "running" and task.started_at is None:
+                    task.started_at = time.time()
                 elif status in ["completed", "failed"]:
-                    job.completed_at = time.time()
+                    task.completed_at = time.time()
                     if result is not None:
-                        job.result = result
+                        task.result = result
                     if error is not None:
-                        job.error = error
+                        task.error = error
                 break
         
-        # Check if all jobs are complete
-        if submission.is_complete() and submission.completed_at is None:
-            submission.completed_at = time.time()
-            logger.info(f"All jobs complete for submission {submission.submission_id}")
+        # Check if all tasks are complete
+        if job_execution.is_complete() and job_execution.completed_at is None:
+            job_execution.completed_at = time.time()
+            logger.info(f"All agent tasks complete for job execution {job_execution.job_id}")
         
-        new_ref = ray.put(submission)
-        logger.info(f"Updated job {job_id} status to {status}")
+        new_ref = ray.put(job_execution)
+        logger.info(f"Updated agent task {task_id} status to {status}")
         return new_ref
     
     @staticmethod
-    def get_submission(ref: ray.ObjectRef) -> JobSubmission:
-        """Get the current submission state"""
+    def get_job_execution(ref: ray.ObjectRef) -> JobExecution:
+        """Get the current job execution state"""
         return ray.get(ref)
     
     @staticmethod
     def get_results(ref: ray.ObjectRef) -> Dict[str, Any]:
-        """Get all results from completed jobs"""
-        submission = ray.get(ref)
+        """Get all results from completed agent tasks"""
+        job_execution = ray.get(ref)
         results = {}
         
-        for job in submission.jobs:
-            if job.status == "completed" and job.result is not None:
-                results[job.job_id] = {
-                    "agent_name": job.agent_name,
-                    "input_data": job.input_data,
-                    "result": job.result,
-                    "duration": job.completed_at - job.started_at if job.started_at else None
+        for task in job_execution.agent_tasks:
+            if task.status == "completed" and task.result is not None:
+                results[task.job_id] = {
+                    "agent_name": task.agent_name,
+                    "input_data": task.input_data,
+                    "result": task.result,
+                    "duration": task.completed_at - task.started_at if task.started_at else None
                 }
         
         return {
-            "submission_id": submission.submission_id,
-            "audience_description": submission.audience_description,
-            "total_jobs": len(submission.jobs),
-            "completed_jobs": len(submission.get_completed_jobs()),
-            "failed_jobs": len(submission.get_failed_jobs()),
+            "job_id": job_execution.job_id,
+            "audience_description": job_execution.audience_description,
+            "total_jobs": len(job_execution.agent_tasks),
+            "completed_jobs": len(job_execution.get_completed_tasks()),
+            "failed_jobs": len(job_execution.get_failed_tasks()),
             "results": results,
-            "is_complete": submission.is_complete(),
-            "total_duration": submission.completed_at - submission.created_at if submission.completed_at else None
+            "is_complete": job_execution.is_complete(),
+            "total_duration": job_execution.completed_at - job_execution.created_at if job_execution.completed_at else None
         }
