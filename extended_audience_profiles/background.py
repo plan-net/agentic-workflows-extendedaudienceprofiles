@@ -8,7 +8,7 @@ import requests
 import time
 import json
 from typing import List, Dict, Any, Optional
-from .state import StateManager, Job
+from .state import StateManager, Task
 from .masumi import MasumiClient
 from .storage import storage
 
@@ -16,29 +16,33 @@ logger = logging.getLogger(__name__)
 
 
 @ray.remote
-def poll_masumi_jobs(job_execution_ref: ray.ObjectRef) -> ray.ObjectRef:
+def poll_masumi_jobs(state_ref: ray.ObjectRef, job_id: str) -> ray.ObjectRef:
     """
-    Poll all pending agent tasks in a job execution until they complete or fail.
+    Poll all pending agent tasks in a job until they complete or fail.
     Updates the Ray state as tasks complete.
     
     Args:
-        job_execution_ref: Reference to JobExecution in Ray object store
+        state_ref: Reference to AppState in Ray object store
+        job_id: ID of the job to poll
         
     Returns:
-        Updated job execution reference with all tasks completed
+        Updated state reference with all tasks completed
     """
     # Ray remote tasks run the async code with asyncio.run
-    return asyncio.run(_poll_masumi_jobs_async(job_execution_ref))
+    return asyncio.run(_poll_masumi_jobs_async(state_ref, job_id))
 
 
-async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: ray.ObjectRef = None, tracer=None) -> ray.ObjectRef:
+async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=None) -> ray.ObjectRef:
     """Async implementation of job polling"""
-    job_execution = StateManager.get_job_execution(job_execution_ref)
-    logger.info(f"Starting background task polling for job execution {job_execution.job_id}")
-    logger.info(f"Total agent tasks to poll: {len(job_execution.agent_tasks)}")
+    job = StateManager.get_job(state_ref, job_id)
+    if not job:
+        logger.error(f"Job {job_id} not found")
+        return state_ref
+    logger.info(f"Starting background task polling for job {job_id}")
+    logger.info(f"Total agent tasks to poll: {len(job.tasks)}")
     
     if tracer:
-        await tracer.markdown(f"📊 Found {len(job_execution.agent_tasks)} agent tasks to poll")
+        await tracer.markdown(f"📊 Found {len(job.tasks)} agent tasks to poll")
     
     client = MasumiClient()
     
@@ -52,62 +56,77 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
     poll_interval = initial_interval
     
     while True:
-        job_execution = StateManager.get_job_execution(job_execution_ref)
-        
-        # Check for pending tasks
-        pending_tasks = [task for task in job_execution.agent_tasks if task.status in ["pending", "running"]]
-        
-        if not pending_tasks:
-            logger.info(f"All agent tasks complete for job execution {job_execution.job_id}")
+        # Get job for checking completion
+        job = StateManager.get_job(state_ref, job_id)
+        if not job:
+            logger.error(f"Job {job_id} not found during polling")
             break
+        
+        if job.is_complete():
+            logger.info(f"All agent tasks complete for job {job_id}")
+            break
+        
+        pending_tasks = [task for task in job.tasks if task.status in ["pending", "running"]]
         
         # Check timeout
         elapsed = asyncio.get_event_loop().time() - start_time
         if elapsed > timeout:
             logger.error(f"Polling timeout after {elapsed:.0f} seconds")
-            # Mark remaining tasks as failed
-            for task in pending_tasks:
-                job_execution_ref = StateManager.update_task_status(
-                    job_execution_ref, 
-                    task.job_id, 
-                    "failed",
-                    error=f"Timeout after {elapsed:.0f} seconds"
-                )
+            # Batch update remaining tasks as failed
+            timeout_updates = [
+                {
+                    'task_id': task.id,
+                    'status': 'failed',
+                    'error': f'Timeout after {elapsed:.0f} seconds'
+                }
+                for task in pending_tasks
+            ]
+            state_ref = StateManager.update_tasks(state_ref, job_id, timeout_updates)
             break
         
-        # Poll each pending task
+        # Collect updates to apply in batch
+        task_updates = []
+        
+        # First, mark all pending tasks as running
+        pending_to_running = [
+            task for task in pending_tasks if task.status == "pending"
+        ]
+        if pending_to_running:
+            running_updates = [
+                {'task_id': task.id, 'status': 'running'}
+                for task in pending_to_running
+            ]
+            state_ref = StateManager.update_tasks(state_ref, job_id, running_updates)
+        
+        # Poll each task and collect results
         for task in pending_tasks:
             try:
-                logger.debug(f"Polling agent task {task.job_id} (status: {task.status})")
-                
-                # Update to running if still pending
-                if task.status == "pending":
-                    job_execution_ref = StateManager.update_task_status(
-                        job_execution_ref, task.job_id, "running"
-                    )
+                logger.debug(f"Polling agent task {task.id} (status: {task.status})")
                 
                 # Poll the task status using the client with agent_name
-                logger.debug(f"Polling status for job {task.job_id} from agent {task.agent_name}")
-                status_result = await client.poll_job_status(task.job_id, task.agent_name)
+                logger.debug(f"Polling status for job {task.id} from agent {task.agent_name}")
+                status_result = await client.poll_job_status(task.id, task.agent_name)
                 
                 # Show the exact status in tracer - single line
                 if tracer:
                     task_status = status_result.get('status', 'unknown')
-                    await tracer.markdown(f"📊 Task {task.job_id[:8]}... status: **{task_status}**")
+                    await tracer.markdown(f"📊 Task {task.id[:8]}... status: **{task_status}**")
                 
                 if status_result['status'] == 'completed':
                     # Task completed successfully
                     result_content = status_result.get('result', '')
-                    job_execution_ref = StateManager.update_task_status(
-                        job_execution_ref, 
-                        task.job_id, 
-                        "completed",
-                        result=result_content
-                    )
-                    logger.info(f"Agent task {task.job_id} completed successfully")
+                    
+                    # Collect update for batch processing
+                    task_updates.append({
+                        'task_id': task.id,
+                        'status': 'completed',
+                        'result': result_content
+                    })
+                    
+                    logger.info(f"Agent task {task.id} completed successfully")
                     logger.info(f"Result preview: {result_content[:200]}..." if len(result_content) > 200 else f"Result: {result_content}")
                     
-                    # Save result to filesystem
+                    # Save result to filesystem (can be done independently)
                     try:
                         # Extract any hash fields from the status result
                         hash_fields = {k: v for k, v in status_result.items() if 'hash' in k.lower()}
@@ -117,17 +136,17 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
                             'started_at': task.started_at,
                             'completed_at': time.time(),
                             'duration': time.time() - task.started_at if task.started_at else None,
-                            'round': task.round  # Track which round this task belongs to
+                            # 'round': task.round  # Removed - not part of new Task model
                         }
                         
                         # Add any hash fields found in the response
                         if hash_fields:
                             metadata['hashes'] = hash_fields
-                            logger.info(f"Found hash fields in completed job {task.job_id}: {hash_fields}")
+                            logger.info(f"Found hash fields in completed job {task.id}: {hash_fields}")
                         
                         await storage.save_agent_result(
-                            job_id=job_execution.job_id,
-                            masumi_job_id=task.job_id,
+                            job_id=job_id,
+                            masumi_job_id=task.id,
                             agent_name=task.agent_name,
                             content=result_content,
                             metadata=metadata
@@ -138,24 +157,31 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
                 elif status_result['status'] == 'failed':
                     # Task failed
                     error_msg = status_result.get('result', status_result.get('message', 'Unknown error'))
-                    job_execution_ref = StateManager.update_task_status(
-                        job_execution_ref, 
-                        task.job_id, 
-                        "failed",
-                        error=error_msg
-                    )
-                    logger.error(f"Agent task {task.job_id} failed: {error_msg}")
+                    
+                    # Collect update for batch processing
+                    task_updates.append({
+                        'task_id': task.id,
+                        'status': 'failed',
+                        'error': error_msg
+                    })
+                    
+                    logger.error(f"Agent task {task.id} failed: {error_msg}")
                     
             except Exception as e:
-                logger.error(f"Error polling agent task {task.job_id}: {str(e)}")
+                logger.error(f"Error polling agent task {task.id}: {str(e)}")
                 # Don't mark as failed immediately, will retry on next poll
+        
+        # Apply all collected updates in a single batch operation
+        if task_updates:
+            state_ref = StateManager.update_tasks(state_ref, job_id, task_updates)
+            logger.info(f"Applied {len(task_updates)} task updates in batch")
         
         # Show status update periodically
         if tracer and len(pending_tasks) > 0:
-            job_execution = StateManager.get_job_execution(job_execution_ref)
-            completed = len([t for t in job_execution.agent_tasks if t.status == "completed"])
-            failed = len([t for t in job_execution.agent_tasks if t.status == "failed"])
-            total = len(job_execution.agent_tasks)
+            job_summary = StateManager.get_job_summary(state_ref, job_id)
+            completed = job_summary['completed_tasks']
+            failed = job_summary['failed_tasks']
+            total = job_summary['total_tasks']
             await tracer.markdown(f"⏳ Progress: {completed + failed}/{total} completed")
         
         # Wait before next poll with exponential backoff
@@ -163,12 +189,16 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
         await asyncio.sleep(poll_interval)
         poll_interval = min(poll_interval * backoff_factor, max_interval)
     
-    # Return final job execution reference
-    final_job_execution = StateManager.get_job_execution(job_execution_ref)
-    completed_tasks = final_job_execution.get_completed_tasks()
-    failed_tasks = final_job_execution.get_failed_tasks()
+    # Return final state reference
+    final_job = StateManager.get_job(state_ref, job_id)
+    if not final_job:
+        logger.error(f"Job {job_id} not found at end of polling")
+        return state_ref
+        
+    completed_tasks = [t for t in final_job.tasks if t.status == "completed"]
+    failed_tasks = [t for t in final_job.tasks if t.status == "failed"]
     
-    logger.info(f"Polling complete. Total agent tasks: {len(final_job_execution.agent_tasks)}, "
+    logger.info(f"Polling complete. Total agent tasks: {len(final_job.tasks)}, "
                 f"Completed: {len(completed_tasks)}, "
                 f"Failed: {len(failed_tasks)}")
     
@@ -198,7 +228,7 @@ async def _poll_masumi_jobs_async(job_execution_ref: ray.ObjectRef, budget_ref: 
         else:
             await tracer.markdown(f"📋 Results: {len(completed_tasks)} successful")
     
-    return job_execution_ref
+    return state_ref
 
 
 @ray.remote

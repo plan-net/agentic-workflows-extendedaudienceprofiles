@@ -4,21 +4,21 @@ Tools for OpenAI Agents - includes Masumi Network integration tools
 from typing import Dict, Any, List, Optional
 from agents import function_tool
 from .masumi import MasumiClient
-from .state import BudgetManager
+from .state import StateManager
 import ray
 import logging
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-# Global budget reference set by the agent
-_budget_ref = None
+# Global state reference set by the agent
+_state_ref = None
 
-def set_budget_ref(budget_ref: ray.ObjectRef) -> None:
-    """Set the global budget reference for tools to use."""
-    global _budget_ref
-    _budget_ref = budget_ref
-    logger.info("Budget reference set for tools")
+def set_state_ref(state_ref: ray.ObjectRef) -> None:
+    """Set the global state reference for tools to use."""
+    global _state_ref
+    _state_ref = state_ref
+    logger.info("State reference set for tools")
 
 
 # Pydantic models for strict schema compliance
@@ -91,8 +91,8 @@ async def list_available_agents() -> Dict[str, Any]:
         client = MasumiClient()
         available_agents = client.get_available_agents()
         
-        # Get budget summary directly from BudgetManager
-        budget_summary = BudgetManager.get_budget_summary(_budget_ref) if _budget_ref else {
+        # Get budget summary directly from StateManager
+        budget_summary = StateManager.get_budget_summary(_state_ref) if _state_ref else {
             'total_budget': float('inf'),
             'total_spent': 0.0,
             'total_remaining': float('inf'),
@@ -182,7 +182,7 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
     Returns:
         Dict containing job_id and submission status (not the result)
     """
-    global _budget_ref
+    global _state_ref
     
     try:
         client = MasumiClient()
@@ -198,15 +198,15 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             }
         
         # Check and reserve budget BEFORE starting the job
-        expected_cost = 0.0
-        if _budget_ref:
-            can_afford, expected_cost, reason, new_budget_ref = BudgetManager.check_and_reserve_budget(
-                _budget_ref, agent_name, agent_config
+        expected_cost = agent_config.get('price', 0.0)
+        if _state_ref:
+            can_afford, reason, new_state_ref = StateManager.reserve_budget(
+                _state_ref, agent_name, expected_cost
             )
             
             if not can_afford:
                 # Get current budget state for error response
-                budget_summary = BudgetManager.get_budget_summary(_budget_ref)
+                budget_summary = StateManager.get_budget_summary(_state_ref)
                 agent_info = budget_summary['agents'].get(agent_name, {})
                 
                 return {
@@ -222,8 +222,8 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                     }
                 }
             
-            # Update global budget ref
-            _budget_ref = new_budget_ref
+            # Update global state ref
+            _state_ref = new_state_ref
         
         # Step 1: Start the job
         logger.info(f"Starting job with agent: {agent_name}")
@@ -241,8 +241,8 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             
             if not purchase_result.get('success'):
                 # Release the budget reservation
-                if _budget_ref:
-                    _budget_ref = BudgetManager.release_reservation(_budget_ref, agent_name, expected_cost)
+                if _state_ref:
+                    _state_ref = StateManager.release_reservation(_state_ref, agent_name, expected_cost)
                 
                 return {
                     'success': False,
@@ -253,16 +253,14 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             
             # Record actual cost
             actual_cost = purchase_result.get('actual_cost', 0.0)
-            if _budget_ref and actual_cost > 0:
-                _budget_ref = BudgetManager.record_actual_cost(
-                    _budget_ref, agent_name, expected_cost, actual_cost, job_id
-                )
+            if _state_ref and actual_cost > 0:
+                _state_ref = StateManager.record_cost(_state_ref, agent_name, expected_cost, actual_cost)
             
             # Return immediately without waiting
             logger.info(f"Job {job_id} submitted successfully, payment completed")
             
             # Get updated budget info after recording actual cost
-            budget_summary = BudgetManager.get_budget_summary(_budget_ref) if _budget_ref else None
+            budget_summary = StateManager.get_budget_summary(_state_ref) if _state_ref else None
             agent_info = budget_summary['agents'].get(agent_name, {}) if budget_summary else {}
             
             return {
@@ -281,8 +279,8 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             
         except Exception as e:
             # Release budget reservation on any error
-            if _budget_ref:
-                _budget_ref = BudgetManager.release_reservation(_budget_ref, agent_name, expected_cost)
+            if _state_ref:
+                _state_ref = StateManager.release_reservation(_state_ref, agent_name, expected_cost)
             raise
         
     except ValueError as ve:

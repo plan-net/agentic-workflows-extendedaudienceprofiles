@@ -1,5 +1,5 @@
 """
-State management using Ray's object store for distributed job tracking
+Simplified state management using Ray's object store
 """
 import ray
 from dataclasses import dataclass, field
@@ -12,287 +12,262 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class Job:
-    """Individual Masumi agent task within a job execution"""
-    job_id: str  # Masumi job ID
+class Task:
+    """Individual agent task"""
+    id: str
     agent_name: str
-    input_data: Dict[str, Any]
     status: str = "pending"  # pending, running, completed, failed
-    result: Optional[Any] = None
+    result: Optional[str] = None
     error: Optional[str] = None
     started_at: Optional[float] = None
     completed_at: Optional[float] = None
-    round: int = 1  # Track which round this job belongs to (1 = first, 2 = refinement)
 
 
 @dataclass
-class JobExecution:
-    """Container for a complete job execution with multiple agent tasks"""
-    job_id: str
-    audience_description: str
-    agent_tasks: List[Job]  # Individual Masumi agent tasks
+class Job:
+    """Job execution with multiple agent tasks"""
+    id: str
+    audience: str
+    tasks: List[Task]
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
     
     def is_complete(self) -> bool:
-        """Check if all agent tasks are complete (either completed or failed)"""
-        return all(task.status in ["completed", "failed"] for task in self.agent_tasks)
+        """Check if all tasks are done"""
+        return all(t.status in ["completed", "failed"] for t in self.tasks)
+
+
+@dataclass
+class AppState:
+    """Single application state combining jobs and budget"""
+    # Budget tracking
+    total_budget: float
+    total_spent: float = 0.0
+    agent_spending: Dict[str, float] = field(default_factory=dict)
+    agent_limits: Dict[str, float] = field(default_factory=dict)
+    agent_prices: Dict[str, float] = field(default_factory=dict)
+    reserved_amounts: Dict[str, float] = field(default_factory=dict)
     
-    def get_completed_tasks(self) -> List[Job]:
-        """Get all successfully completed agent tasks"""
-        return [task for task in self.agent_tasks if task.status == "completed"]
-    
-    def get_failed_tasks(self) -> List[Job]:
-        """Get all failed agent tasks"""
-        return [task for task in self.agent_tasks if task.status == "failed"]
-    
-    def get_tasks_by_round(self, round_num: int) -> List[Job]:
-        """Get all tasks from a specific round"""
-        return [task for task in self.agent_tasks if task.round == round_num]
-    
-    def get_completed_tasks_by_round(self, round_num: int) -> List[Job]:
-        """Get completed tasks from a specific round"""
-        return [task for task in self.agent_tasks 
-                if task.round == round_num and task.status == "completed"]
+    # Active jobs
+    jobs: Dict[str, Job] = field(default_factory=dict)
 
 
 class StateManager:
-    """Manages job execution state in Ray's object store"""
+    """Single state manager for the entire application"""
     
     @staticmethod
-    def create_job_execution(audience_description: str) -> tuple[str, ray.ObjectRef]:
-        """Create a new job execution and store in Ray"""
-        job_id = str(uuid.uuid4())
-        job_execution = JobExecution(
-            job_id=job_id,
-            audience_description=audience_description,
-            agent_tasks=[]
+    def initialize(budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]) -> ray.ObjectRef:
+        """Initialize application state"""
+        state = AppState(
+            total_budget=budget_config.get('total_budget', float('inf')),
+            agent_prices={agent['name']: agent.get('price', 0.0) for agent in agents_config},
+            agent_limits={agent['name']: agent.get('max_total_spend', float('inf')) for agent in agents_config}
         )
-        ref = ray.put(job_execution)
-        logger.info(f"Created job execution {job_id} with ref {ref}")
-        return job_id, ref
+        ref = ray.put(state)
+        logger.info(f"Initialized app state with budget: {state.total_budget}")
+        return ref
     
     @staticmethod
-    def add_agent_task(ref: ray.ObjectRef, task: Job) -> ray.ObjectRef:
-        """Add an agent task to the job execution"""
-        job_execution = ray.get(ref)
-        job_execution.agent_tasks.append(task)
-        new_ref = ray.put(job_execution)
-        logger.info(f"Added agent task {task.job_id} to job execution {job_execution.job_id}")
+    def create_job(ref: ray.ObjectRef, audience: str) -> Tuple[str, ray.ObjectRef]:
+        """Create a new job"""
+        state = ray.get(ref)
+        job_id = str(uuid.uuid4())
+        job = Job(id=job_id, audience=audience, tasks=[])
+        state.jobs[job_id] = job
+        new_ref = ray.put(state)
+        logger.info(f"Created job {job_id}")
+        return job_id, new_ref
+    
+    @staticmethod
+    def add_task(ref: ray.ObjectRef, job_id: str, task: Task) -> ray.ObjectRef:
+        """Add task to a job"""
+        state = ray.get(ref)
+        if job_id in state.jobs:
+            state.jobs[job_id].tasks.append(task)
+            logger.info(f"Added task {task.id} to job {job_id}")
+        new_ref = ray.put(state)
         return new_ref
     
     @staticmethod
-    def update_task_status(ref: ray.ObjectRef, task_id: str, status: str, 
-                          result: Any = None, error: str = None) -> ray.ObjectRef:
-        """Update the status of a specific agent task"""
-        job_execution = ray.get(ref)
+    def update_tasks(ref: ray.ObjectRef, job_id: str, updates: List[Dict[str, Any]]) -> ray.ObjectRef:
+        """Batch update tasks"""
+        state = ray.get(ref)
         
-        for task in job_execution.agent_tasks:
-            if task.job_id == task_id:
-                task.status = status
-                if status == "running" and task.started_at is None:
+        if job_id not in state.jobs:
+            logger.warning(f"Job {job_id} not found")
+            return ray.put(state)
+        
+        job = state.jobs[job_id]
+        task_map = {task.id: task for task in job.tasks}
+        
+        for update in updates:
+            task_id = update['task_id']
+            if task_id in task_map:
+                task = task_map[task_id]
+                task.status = update['status']
+                
+                if update['status'] == "running" and task.started_at is None:
                     task.started_at = time.time()
-                elif status in ["completed", "failed"]:
+                elif update['status'] in ["completed", "failed"]:
                     task.completed_at = time.time()
-                    if result is not None:
-                        task.result = result
-                    if error is not None:
-                        task.error = error
-                break
+                    if 'result' in update:
+                        task.result = update['result']
+                    if 'error' in update:
+                        task.error = update['error']
         
-        # Check if all tasks are complete
-        if job_execution.is_complete() and job_execution.completed_at is None:
-            job_execution.completed_at = time.time()
-            logger.info(f"All agent tasks complete for job execution {job_execution.job_id}")
+        # Check if job is complete
+        if job.is_complete() and job.completed_at is None:
+            job.completed_at = time.time()
+            logger.info(f"Job {job_id} completed")
         
-        new_ref = ray.put(job_execution)
-        logger.info(f"Updated agent task {task_id} status to {status}")
+        new_ref = ray.put(state)
+        logger.info(f"Updated {len(updates)} tasks in job {job_id}")
         return new_ref
     
     @staticmethod
-    def get_job_execution(ref: ray.ObjectRef) -> JobExecution:
-        """Get the current job execution state"""
-        return ray.get(ref)
+    def reserve_budget(ref: ray.ObjectRef, agent_name: str, expected_cost: float) -> Tuple[bool, str, ray.ObjectRef]:
+        """Reserve budget for a job"""
+        state = ray.get(ref)
+        
+        # Check agent limit
+        agent_limit = state.agent_limits.get(agent_name, float('inf'))
+        agent_spent = state.agent_spending.get(agent_name, 0.0)
+        agent_reserved = state.reserved_amounts.get(agent_name, 0.0)
+        agent_remaining = agent_limit - agent_spent - agent_reserved
+        
+        # Check total budget
+        total_reserved = sum(state.reserved_amounts.values())
+        total_remaining = state.total_budget - state.total_spent - total_reserved
+        
+        # Can afford if both agent and total budget allow
+        can_afford = expected_cost <= min(agent_remaining, total_remaining)
+        
+        if can_afford:
+            if agent_name not in state.reserved_amounts:
+                state.reserved_amounts[agent_name] = 0.0
+            state.reserved_amounts[agent_name] += expected_cost
+            reason = "Budget reserved"
+            logger.info(f"Reserved {expected_cost} for {agent_name}")
+        else:
+            if expected_cost > agent_remaining:
+                reason = f"Agent budget exceeded (remaining: {agent_remaining})"
+            else:
+                reason = f"Total budget exceeded (remaining: {total_remaining})"
+            logger.warning(f"Cannot reserve {expected_cost} for {agent_name}: {reason}")
+        
+        new_ref = ray.put(state)
+        return can_afford, reason, new_ref
     
     @staticmethod
-    def get_results(ref: ray.ObjectRef) -> Dict[str, Any]:
-        """Get all results from completed agent tasks"""
-        job_execution = ray.get(ref)
-        results = {}
+    def record_cost(ref: ray.ObjectRef, agent_name: str, expected: float, actual: float) -> ray.ObjectRef:
+        """Record actual cost and release reservation"""
+        state = ray.get(ref)
         
-        for task in job_execution.agent_tasks:
-            if task.status == "completed" and task.result is not None:
-                results[task.job_id] = {
+        # Release reservation
+        if agent_name in state.reserved_amounts:
+            state.reserved_amounts[agent_name] = max(0, state.reserved_amounts[agent_name] - expected)
+        
+        # Record spending
+        if agent_name not in state.agent_spending:
+            state.agent_spending[agent_name] = 0.0
+        state.agent_spending[agent_name] += actual
+        state.total_spent += actual
+        
+        new_ref = ray.put(state)
+        logger.info(f"Recorded cost {actual} for {agent_name} (expected: {expected})")
+        return new_ref
+    
+    @staticmethod
+    def release_reservation(ref: ray.ObjectRef, agent_name: str, amount: float) -> ray.ObjectRef:
+        """Release a budget reservation if job fails"""
+        state = ray.get(ref)
+        
+        if agent_name in state.reserved_amounts:
+            state.reserved_amounts[agent_name] = max(0, state.reserved_amounts[agent_name] - amount)
+            logger.info(f"Released reservation of {amount} for {agent_name}")
+        
+        return ray.put(state)
+    
+    @staticmethod
+    def get_job(ref: ray.ObjectRef, job_id: str) -> Optional[Job]:
+        """Get a specific job"""
+        state = ray.get(ref)
+        return state.jobs.get(job_id)
+    
+    @staticmethod
+    def get_job_results(ref: ray.ObjectRef, job_id: str) -> Dict[str, Any]:
+        """Get formatted results for a job"""
+        state = ray.get(ref)
+        job = state.jobs.get(job_id)
+        
+        if not job:
+            return {"error": f"Job {job_id} not found"}
+        
+        results = {}
+        for task in job.tasks:
+            if task.status == "completed" and task.result:
+                results[task.id] = {
                     "agent_name": task.agent_name,
-                    "input_data": task.input_data,
                     "result": task.result,
                     "duration": task.completed_at - task.started_at if task.started_at else None
                 }
         
         return {
-            "job_id": job_execution.job_id,
-            "audience_description": job_execution.audience_description,
-            "total_jobs": len(job_execution.agent_tasks),
-            "completed_jobs": len(job_execution.get_completed_tasks()),
-            "failed_jobs": len(job_execution.get_failed_tasks()),
+            "job_id": job_id,
+            "audience_description": job.audience,
+            "total_jobs": len(job.tasks),
+            "completed_jobs": len([t for t in job.tasks if t.status == "completed"]),
+            "failed_jobs": len([t for t in job.tasks if t.status == "failed"]),
             "results": results,
-            "is_complete": job_execution.is_complete(),
-            "total_duration": job_execution.completed_at - job_execution.created_at if job_execution.completed_at else None
+            "is_complete": job.is_complete(),
+            "total_duration": job.completed_at - job.created_at if job.completed_at else None
         }
-
-
-@dataclass
-class BudgetState:
-    """Budget tracking state in Ray object store"""
-    total_budget: float
-    total_spent: float = 0.0
-    agent_spending: Dict[str, float] = field(default_factory=dict)
-    agent_limits: Dict[str, float] = field(default_factory=dict)  # max_total_spend per agent
-    agent_prices: Dict[str, float] = field(default_factory=dict)  # Expected prices from yaml
-    actual_costs: List[Dict[str, Any]] = field(default_factory=list)  # Track actual vs expected
-    reserved_amounts: Dict[str, float] = field(default_factory=dict)  # Temporary reservations
-    
-    def get_agent_spent(self, agent_name: str) -> float:
-        """Get total amount spent on a specific agent"""
-        return self.agent_spending.get(agent_name, 0.0)
-    
-    def get_agent_remaining(self, agent_name: str) -> float:
-        """Get remaining budget for a specific agent"""
-        agent_limit = self.agent_limits.get(agent_name, float('inf'))
-        agent_spent = self.get_agent_spent(agent_name)
-        agent_reserved = self.reserved_amounts.get(agent_name, 0.0)
-        total_remaining = self.total_budget - self.total_spent - sum(self.reserved_amounts.values())
-        
-        # Agent's remaining is the minimum of its own limit and total remaining
-        agent_specific_remaining = agent_limit - agent_spent - agent_reserved
-        return min(agent_specific_remaining, total_remaining)
-
-
-class BudgetManager:
-    """Manages budget state in Ray's object store"""
     
     @staticmethod
-    def initialize_budget(budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]) -> ray.ObjectRef:
-        """Initialize budget state from config"""
-        budget_state = BudgetState(
-            total_budget=budget_config.get('total_budget', float('inf')),
-            agent_prices={agent['name']: agent.get('price', 0.0) for agent in agents_config},
-            agent_limits={agent['name']: agent.get('max_total_spend', float('inf')) for agent in agents_config}
-        )
-        ref = ray.put(budget_state)
-        logger.info(f"Initialized budget state with total budget: {budget_state.total_budget}")
-        return ref
-    
-    @staticmethod
-    def check_and_reserve_budget(ref: ray.ObjectRef, agent_name: str, agent_config: Dict[str, Any]) -> Tuple[bool, float, str, ray.ObjectRef]:
-        """
-        Check if budget allows job and reserve funds.
+    def get_job_summary(ref: ray.ObjectRef, job_id: str) -> Dict[str, Any]:
+        """Get lightweight job summary"""
+        state = ray.get(ref)
+        job = state.jobs.get(job_id)
         
-        Returns:
-            Tuple of (can_afford, expected_cost, reason, new_ref)
-        """
-        budget_state = ray.get(ref)
+        if not job:
+            return {"error": f"Job {job_id} not found"}
         
-        # Get expected price
-        expected_cost = budget_state.agent_prices.get(agent_name, agent_config.get('price', 0.0))
-        
-        # Check agent remaining budget
-        agent_remaining = budget_state.get_agent_remaining(agent_name)
-        
-        if agent_remaining <= 0:
-            return False, expected_cost, f"No remaining budget for agent {agent_name}", ref
-        
-        if expected_cost > agent_remaining:
-            return False, expected_cost, f"Expected cost {expected_cost} exceeds remaining budget {agent_remaining}", ref
-        
-        # Reserve the expected amount
-        if agent_name not in budget_state.reserved_amounts:
-            budget_state.reserved_amounts[agent_name] = 0.0
-        budget_state.reserved_amounts[agent_name] += expected_cost
-        
-        new_ref = ray.put(budget_state)
-        logger.info(f"Reserved {expected_cost} for {agent_name}, remaining: {agent_remaining - expected_cost}")
-        return True, expected_cost, "Budget reserved", new_ref
-    
-    @staticmethod
-    def record_actual_cost(ref: ray.ObjectRef, agent_name: str, expected: float, actual: float, job_id: str) -> ray.ObjectRef:
-        """Record actual cost and update price estimates"""
-        budget_state = ray.get(ref)
-        
-        # Remove reservation
-        if agent_name in budget_state.reserved_amounts:
-            budget_state.reserved_amounts[agent_name] = max(0, budget_state.reserved_amounts[agent_name] - expected)
-        
-        # Record actual spending
-        if agent_name not in budget_state.agent_spending:
-            budget_state.agent_spending[agent_name] = 0.0
-        budget_state.agent_spending[agent_name] += actual
-        budget_state.total_spent += actual
-        
-        # Track cost accuracy
-        budget_state.actual_costs.append({
-            'agent_name': agent_name,
-            'job_id': job_id,
-            'expected': expected,
-            'actual': actual,
-            'difference': actual - expected,
-            'timestamp': time.time()
-        })
-        
-        # Update price estimate if actual cost differs significantly (>10%)
-        if expected > 0 and abs(actual - expected) / expected > 0.1:
-            # Use weighted average of last 5 jobs
-            recent_costs = [c for c in budget_state.actual_costs[-5:] if c['agent_name'] == agent_name]
-            if recent_costs:
-                avg_actual = sum(c['actual'] for c in recent_costs) / len(recent_costs)
-                budget_state.agent_prices[agent_name] = avg_actual
-                logger.info(f"Updated {agent_name} price estimate from {expected} to {avg_actual}")
-        
-        new_ref = ray.put(budget_state)
-        logger.info(f"Recorded actual cost {actual} for {agent_name} (expected: {expected})")
-        return new_ref
-    
-    @staticmethod
-    def release_reservation(ref: ray.ObjectRef, agent_name: str, amount: float) -> ray.ObjectRef:
-        """Release a budget reservation (e.g., if job fails to start)"""
-        budget_state = ray.get(ref)
-        
-        if agent_name in budget_state.reserved_amounts:
-            budget_state.reserved_amounts[agent_name] = max(0, budget_state.reserved_amounts[agent_name] - amount)
-            logger.info(f"Released reservation of {amount} for {agent_name}")
-        
-        return ray.put(budget_state)
+        return {
+            "job_id": job_id,
+            "total_tasks": len(job.tasks),
+            "completed_tasks": len([t for t in job.tasks if t.status == "completed"]),
+            "failed_tasks": len([t for t in job.tasks if t.status == "failed"]),
+            "is_complete": job.is_complete()
+        }
     
     @staticmethod
     def get_budget_summary(ref: ray.ObjectRef) -> Dict[str, Any]:
-        """Get comprehensive budget summary"""
-        budget_state = ray.get(ref)
+        """Get budget summary"""
+        state = ray.get(ref)
         
-        agent_summary = {}
-        for agent_name in set(list(budget_state.agent_spending.keys()) + list(budget_state.agent_limits.keys())):
-            agent_summary[agent_name] = {
-                'spent': budget_state.get_agent_spent(agent_name),
-                'reserved': budget_state.reserved_amounts.get(agent_name, 0.0),
-                'remaining': budget_state.get_agent_remaining(agent_name),
-                'limit': budget_state.agent_limits.get(agent_name, float('inf')),
-                'expected_price': budget_state.agent_prices.get(agent_name, 0.0)
+        total_reserved = sum(state.reserved_amounts.values())
+        total_remaining = state.total_budget - state.total_spent - total_reserved
+        
+        agents = {}
+        for agent_name in set(list(state.agent_spending.keys()) + list(state.agent_limits.keys())):
+            spent = state.agent_spending.get(agent_name, 0.0)
+            reserved = state.reserved_amounts.get(agent_name, 0.0)
+            limit = state.agent_limits.get(agent_name, float('inf'))
+            remaining = limit - spent - reserved
+            
+            agents[agent_name] = {
+                'spent': spent,
+                'reserved': reserved,
+                'remaining': min(remaining, total_remaining),
+                'limit': limit,
+                'expected_price': state.agent_prices.get(agent_name, 0.0)
             }
         
-        # Calculate cost accuracy
-        cost_accuracy = None
-        if budget_state.actual_costs:
-            total_expected = sum(c['expected'] for c in budget_state.actual_costs if c['expected'] > 0)
-            total_actual = sum(c['actual'] for c in budget_state.actual_costs)
-            if total_expected > 0:
-                accuracy_pct = ((total_actual - total_expected) / total_expected) * 100
-                cost_accuracy = f"Actual costs were {accuracy_pct:+.1f}% vs estimates"
-        
         return {
-            'total_budget': budget_state.total_budget,
-            'total_spent': budget_state.total_spent,
-            'total_reserved': sum(budget_state.reserved_amounts.values()),
-            'total_remaining': budget_state.total_budget - budget_state.total_spent - sum(budget_state.reserved_amounts.values()),
-            'agents': agent_summary,
-            'cost_accuracy': cost_accuracy,
-            'recent_costs': budget_state.actual_costs[-10:]  # Last 10 transactions
+            'total_budget': state.total_budget,
+            'total_spent': state.total_spent,
+            'total_reserved': total_reserved,
+            'total_remaining': total_remaining,
+            'agents': agents
         }
+

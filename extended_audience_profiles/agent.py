@@ -8,8 +8,8 @@ import time
 import ray
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
-from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_budget_ref
-from .state import StateManager, Job, BudgetManager
+from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_state_ref
+from .state import StateManager, Task
 from .background import _poll_masumi_jobs_async
 from .storage import storage
 from .masumi import MasumiClient
@@ -18,21 +18,21 @@ from .truncation import SmartTruncator, TruncationStrategy
 
 logger = logging.getLogger(__name__)
 
-# Global budget reference - initialized once per process
-_budget_ref = None
+# Global state reference - initialized once per process
+_state_ref = None
 
-def get_or_create_budget_ref() -> ray.ObjectRef:
-    """Get or create the global budget reference."""
-    global _budget_ref
-    if _budget_ref is None:
-        # Initialize budget from config
+def get_or_create_state_ref() -> ray.ObjectRef:
+    """Get or create the global state reference."""
+    global _state_ref
+    if _state_ref is None:
+        # Initialize state from config
         client = MasumiClient()  # Load config
-        _budget_ref = BudgetManager.initialize_budget(
+        _state_ref = StateManager.initialize(
             client.budget_config,
             client.agents_config
         )
-        logger.info("Initialized global budget state")
-    return _budget_ref
+        logger.info("Initialized global application state")
+    return _state_ref
 
 # Phase 1: Orchestrator agent that submits jobs to Masumi agents
 orchestrator_agent = Agent(
@@ -394,7 +394,7 @@ def _create_success_response(
     results: Dict[str, Any],
     submitted_tasks: List[Dict[str, str]],
     second_round_tasks: List[Dict[str, str]] = None,
-    budget_ref: Optional[ray.ObjectRef] = None
+    state_ref: Optional[ray.ObjectRef] = None
 ) -> Dict[str, Any]:
     """Create a standardized success response with metadata."""
     if second_round_tasks is None:
@@ -421,14 +421,13 @@ def _create_success_response(
     }
     
     # Add budget summary if available
-    if budget_ref:
+    if state_ref:
         try:
-            budget_summary = BudgetManager.get_budget_summary(budget_ref)
+            budget_summary = StateManager.get_budget_summary(state_ref)
             response["budget_summary"] = {
                 "total_budget": budget_summary["total_budget"],
                 "total_spent": budget_summary["total_spent"],
                 "total_remaining": budget_summary["total_remaining"],
-                "cost_accuracy": budget_summary.get("cost_accuracy"),
                 "agent_breakdown": budget_summary["agents"]
             }
         except Exception as e:
@@ -454,13 +453,13 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
     try:
         logger.info(f"Starting audience profile generation for: {audience_description}")
         
-        # Initialize budget reference
-        budget_ref = get_or_create_budget_ref()
-        set_budget_ref(budget_ref)
+        # Initialize state reference
+        state_ref = get_or_create_state_ref()
+        set_state_ref(state_ref)
         
-        # Create a new job execution in Ray state
-        job_id, job_execution_ref = StateManager.create_job_execution(audience_description)
-        logger.info(f"Created job execution {job_id}")
+        # Create a new job in the state
+        job_id, state_ref = StateManager.create_job(state_ref, audience_description)
+        logger.info(f"Created job {job_id}")
         
         # Save initial job metadata
         try:
@@ -480,7 +479,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         logger.info("Phase 1: Running orchestrator agent to submit jobs...")
         if tracer:
             # Show initial budget info
-            budget_summary = BudgetManager.get_budget_summary(budget_ref)
+            budget_summary = StateManager.get_budget_summary(state_ref)
             await tracer.markdown(f"💰 **Budget Information**")
             await tracer.markdown(f"- Total Budget: {budget_summary['total_budget']:.1f} USDM")
             await tracer.markdown(f"- Already Spent: {budget_summary['total_spent']:.1f} USDM")
@@ -519,14 +518,13 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             
             # Handle successful task submission
             if result.get('success') and result.get('job_id'):
-                task = Job(
-                    job_id=result['job_id'],  # This is the Masumi job ID
-                    agent_name=result.get('agent_name', 'Unknown'),
-                    input_data={}  # We don't need to track input data for display
+                task = Task(
+                    id=result['job_id'],  # This is the Masumi job ID
+                    agent_name=result.get('agent_name', 'Unknown')
                 )
-                job_execution_ref = StateManager.add_agent_task(job_execution_ref, task)
+                state_ref = StateManager.add_task(state_ref, job_id, task)
                 submitted_tasks.append({
-                    "masumi_job_id": task.job_id,
+                    "masumi_job_id": task.id,
                     "agent": task.agent_name
                 })
                 
@@ -570,10 +568,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("⏳ Polling for results (5-20 minutes)...")
         
         # Run the polling directly in this async context so we can use the tracer
-        final_job_execution_ref = await _poll_masumi_jobs_async(job_execution_ref, budget_ref, tracer)
+        state_ref = await _poll_masumi_jobs_async(state_ref, job_id, tracer)
         
         # Get the completed job execution results
-        results = StateManager.get_results(final_job_execution_ref)
+        results = StateManager.get_job_results(state_ref, job_id)
         
         if not results['is_complete']:
             raise Exception("Not all jobs completed successfully")
@@ -586,7 +584,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("\n🔬 **Phase 3: Refinement Analysis**")
             
             # Show current budget status
-            budget_summary = BudgetManager.get_budget_summary(budget_ref)
+            budget_summary = StateManager.get_budget_summary(state_ref)
             await tracer.markdown(f"💰 **Remaining Budget**: {budget_summary['total_remaining']:.1f} USDM")
             await tracer.markdown("🤔 Analyzing first round results...")
         
@@ -594,7 +592,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         refinement_prompt = _format_results_for_refinement(
             results['results'],
             audience_description,
-            BudgetManager.get_budget_summary(budget_ref)['total_remaining']
+            StateManager.get_budget_summary(state_ref)['total_remaining']
         )
         
         refinement_result = await Runner.run(
@@ -617,15 +615,13 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             
             # Handle successful task submission
             if result.get('success') and result.get('job_id'):
-                task = Job(
-                    job_id=result['job_id'],
-                    agent_name=result.get('agent_name', 'Unknown'),
-                    input_data={},
-                    round=2  # Mark as second round
+                task = Task(
+                    id=result['job_id'],
+                    agent_name=result.get('agent_name', 'Unknown')
                 )
-                job_execution_ref = StateManager.add_agent_task(job_execution_ref, task)
+                state_ref = StateManager.add_task(state_ref, job_id, task)
                 second_round_tasks.append({
-                    "masumi_job_id": task.job_id,
+                    "masumi_job_id": task.id,
                     "agent": task.agent_name
                 })
                 
@@ -653,10 +649,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                 await tracer.markdown("⏳ Polling for deep-dive results...")
             
             # Poll again for second round
-            final_job_execution_ref = await _poll_masumi_jobs_async(job_execution_ref, budget_ref, tracer)
+            state_ref = await _poll_masumi_jobs_async(state_ref, job_id, tracer)
             
             # Get all results (both rounds)
-            results = StateManager.get_results(final_job_execution_ref)
+            results = StateManager.get_job_results(state_ref, job_id)
             
             if not results['is_complete']:
                 raise Exception("Not all jobs completed successfully")
@@ -708,7 +704,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                 await tracer.markdown("- ⚠️ Some content was truncated to fit context window")
             
             # Show final budget summary
-            final_budget = BudgetManager.get_budget_summary(budget_ref)
+            final_budget = StateManager.get_budget_summary(state_ref)
             await tracer.markdown("\n💰 **Final Budget Summary**")
             await tracer.markdown(f"- Initial Budget: {final_budget['total_budget']:.1f} USDM")
             await tracer.markdown(f"- Total Spent: {final_budget['total_spent']:.1f} USDM")
@@ -721,9 +717,6 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     if agent_info['spent'] > 0:
                         await tracer.markdown(f"- {agent_name}: {agent_info['spent']:.1f} USDM spent")
             
-            # Show cost accuracy if available
-            if final_budget.get('cost_accuracy'):
-                await tracer.markdown(f"\n📈 **Cost Accuracy**: {final_budget['cost_accuracy']}")
             
             await tracer.markdown("\n✨ **Extended audience profile ready!**")
         
@@ -754,7 +747,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             results=results,
             submitted_tasks=submitted_tasks,
             second_round_tasks=second_round_tasks,
-            budget_ref=budget_ref
+            state_ref=state_ref
         )
         
     except Exception as e:
