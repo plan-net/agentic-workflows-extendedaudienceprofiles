@@ -13,6 +13,8 @@ from .state import StateManager, Job, BudgetManager
 from .background import _poll_masumi_jobs_async
 from .storage import storage
 from .masumi import MasumiClient
+from .token_utils import TokenCounter, check_token_fit, format_token_summary
+from .truncation import SmartTruncator, TruncationStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,14 @@ orchestrator_agent = Agent(
     - Consider value: a more expensive agent might provide better insights
     - Plan ahead: ensure you have budget for all planned jobs before starting
     - Be flexible: if budget is tight, prioritize quality over quantity
+    
+    Token window considerations:
+    - The consolidator agent (o3-mini) has a 200k token context window
+    - Each agent typically returns 500-2000 tokens of content
+    - Plan your queries to balance breadth vs depth:
+      - For simple topics: 3-4 focused queries work well
+      - For complex topics: 2-3 deeper queries may be better
+      - If you request very detailed research from many agents, results may be truncated
     
     Example strategy for limited budget:
     - If total remaining is 10.0 and agents cost 3.0 each, plan for 3 jobs max
@@ -149,8 +159,61 @@ def _find_agent_name_from_previous_calls(items: List[Any], current_index: int) -
     return None
 
 
-def _format_research_results(results: Dict[str, Any]) -> str:
-    """Format research results for consolidator agent."""
+def _format_research_results(
+    results: Dict[str, Any], 
+    model: str = "o3-mini",
+    tracer=None
+) -> tuple[str, Dict[str, Any]]:
+    """
+    Format research results for consolidator agent with token management.
+    
+    Returns:
+        Tuple of (formatted_results, token_metadata)
+    """
+    # First check if results fit within context
+    fits, token_metadata = check_token_fit(results, model)
+    
+    # Log token analysis
+    logger.info(f"Token analysis: {token_metadata['total_tokens']} tokens, "
+                f"{token_metadata['percentage_used']:.1f}% of budget")
+    
+    # Display token info in tracer if available
+    if tracer:
+        asyncio.create_task(_display_token_analysis(tracer, results, token_metadata))
+    
+    # If results don't fit, truncate them
+    if not fits:
+        logger.warning(f"Results exceed context window. Applying truncation strategy.")
+        truncator = SmartTruncator(model)
+        counter = TokenCounter()
+        budget = counter.get_token_budget(model)
+        
+        # Truncate results to fit
+        truncated_results, truncation_info = truncator.truncate_results(
+            results,
+            budget.available_tokens,
+            strategy=TruncationStrategy.SMART_SECTIONS
+        )
+        
+        # Update results with truncated versions
+        for job_id, trunc_data in truncated_results.items():
+            results[job_id] = trunc_data
+        
+        # Update metadata with truncation info
+        token_metadata['truncation_applied'] = True
+        token_metadata['truncation_info'] = {
+            job_id: {
+                'was_truncated': info.was_truncated,
+                'original_tokens': info.original_tokens,
+                'truncated_tokens': info.truncated_tokens,
+                'sections_removed': info.sections_removed
+            }
+            for job_id, info in truncation_info.items()
+        }
+    else:
+        token_metadata['truncation_applied'] = False
+    
+    # Format results as before
     formatted_results = []
     for job_id, data in results.items():
         agent_name = data.get('agent_name', 'Unknown')
@@ -163,7 +226,37 @@ def _format_research_results(results: Dict[str, Any]) -> str:
             f"Result: {result}"
         )
     
-    return "\n\n".join(formatted_results)
+    return "\n\n".join(formatted_results), token_metadata
+
+
+async def _display_token_analysis(tracer, results: Dict[str, Any], token_metadata: Dict[str, Any]):
+    """Display token analysis in tracer."""
+    await tracer.markdown("\n📊 **Token Usage Analysis**")
+    
+    # Per-agent breakdown
+    for job_id, tokens in token_metadata['per_result_tokens'].items():
+        agent_name = results[job_id].get('agent_name', 'Unknown')
+        await tracer.markdown(f"- {agent_name}: {tokens:,} tokens")
+    
+    # Total usage
+    await tracer.markdown(f"\n**Total**: {token_metadata['total_tokens']:,} tokens "
+                         f"({token_metadata['percentage_used']:.1f}% of budget)")
+    
+    # Status
+    if token_metadata['fits_in_context']:
+        await tracer.markdown("✅ All results fit within context window")
+    else:
+        await tracer.markdown("⚠️ Results truncated to fit context window")
+        
+        if 'truncation_info' in token_metadata:
+            await tracer.markdown("\n**Truncation Details:**")
+            for job_id, info in token_metadata['truncation_info'].items():
+                if info['was_truncated']:
+                    agent_name = results[job_id].get('agent_name', 'Unknown')
+                    await tracer.markdown(f"- {agent_name}: {info['original_tokens']:,} → "
+                                        f"{info['truncated_tokens']:,} tokens")
+                    if info.get('sections_removed'):
+                        await tracer.markdown(f"  Removed: {', '.join(info['sections_removed'])}")
 
 
 async def _handle_job_submission_error(result: Dict[str, Any], items: List[Any], index: int, tracer) -> None:
@@ -393,8 +486,19 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("\n🧪 **Phase 3: Synthesis**")
             await tracer.markdown("🤖 Running consolidator agent...")
         
-        # Prepare results for consolidator
-        research_results = _format_research_results(results['results'])
+        # Prepare results for consolidator with token management
+        research_results, token_metadata = _format_research_results(
+            results['results'], 
+            model="o3-mini",
+            tracer=tracer
+        )
+        
+        # Store token metadata for later
+        token_info = {
+            'total_tokens': token_metadata['total_tokens'],
+            'percentage_used': token_metadata['percentage_used'],
+            'truncation_applied': token_metadata.get('truncation_applied', False)
+        }
         
         consolidator_prompt = f"""
         Create a comprehensive audience profile based on these research results:
@@ -414,6 +518,13 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         
         if tracer:
             await tracer.markdown("✅ Profile synthesis complete")
+            
+            # Show token usage summary
+            await tracer.markdown(f"\n🔤 **Token Usage Summary**")
+            await tracer.markdown(f"- Input tokens: {token_info['total_tokens']:,}")
+            await tracer.markdown(f"- Context usage: {token_info['percentage_used']:.1f}%")
+            if token_info['truncation_applied']:
+                await tracer.markdown("- ⚠️ Some content was truncated to fit context window")
             
             # Show final budget summary
             final_budget = BudgetManager.get_budget_summary(budget_ref)
@@ -444,7 +555,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     'audience_description': audience_description,
                     'total_jobs': len(submitted_tasks),
                     'agent_jobs': submitted_tasks,
-                    'created_at': time.time()
+                    'created_at': time.time(),
+                    'token_info': token_info
                 }
             )
             logger.info(f"Saved consolidated profile for job execution {job_id}")

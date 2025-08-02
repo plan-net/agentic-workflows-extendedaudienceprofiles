@@ -1,0 +1,17 @@
+{
+  "job_id": "ee6748b6-84ef-48ea-8404-f9c943f60d99",
+  "audience_description": "how to gen-z think about insurance products - what are their expectations?",
+  "generated_at": "2025-08-02T08:48:59.264822",
+  "total_agents": 2,
+  "agent_executions": [
+    {
+      "masumi_job_id": "c11aeaff-8e33-4f0b-b6cd-c340fd54c907",
+      "agent": "audience-insights-gwi"
+    },
+    {
+      "masumi_job_id": "91dbac09-685d-4c35-9175-283d49851e8a",
+      "agent": "advanced-web-research"
+    }
+  ],
+  "profile_file": "jobs/ee6748b6-84ef-48ea-8404-f9c943f60d99/consolidated/profile.md"
+}

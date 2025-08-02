@@ -1,0 +1,13 @@
+{
+  "agent_name": "advanced-web-research",
+  "jobs": [
+    {
+      "masumi_job_id": "91dbac09-685d-4c35-9175-283d49851e8a",
+      "input": {},
+      "started_at": "2025-08-02T08:40:10.584535",
+      "completed_at": "2025-08-02T08:47:24.849972",
+      "duration_seconds": 434.2654368877411,
+      "status": "completed"
+    }
+  ]
+}
