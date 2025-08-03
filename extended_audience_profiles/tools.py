@@ -19,6 +19,11 @@ def set_state_ref(state_ref: ray.ObjectRef) -> None:
     _state_ref = state_ref
     logger.info("State reference set for tools")
 
+def get_current_state_ref() -> ray.ObjectRef:
+    """Get the current global state reference."""
+    global _state_ref
+    return _state_ref
+
 
 
 
@@ -202,6 +207,12 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             # Record actual cost
             actual_cost = purchase_result.get('actual_cost', 0.0)
             logger.info(f"Purchase result for {agent_name}: actual_cost={actual_cost}, expected_cost={expected_cost}")
+            
+            # If actual_cost is 0, fall back to expected_cost
+            if actual_cost == 0.0 and expected_cost > 0:
+                logger.warning(f"Actual cost is 0, using expected cost {expected_cost} for {agent_name}")
+                actual_cost = expected_cost
+            
             if _state_ref and actual_cost > 0:
                 logger.info(f"Recording cost: {actual_cost} USDM for {agent_name}")
                 _state_ref = StateManager.record_cost(_state_ref, agent_name, expected_cost, actual_cost)

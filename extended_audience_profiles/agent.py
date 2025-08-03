@@ -8,7 +8,7 @@ import time
 import ray
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
-from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_state_ref
+from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_state_ref, get_current_state_ref
 from .state import StateManager, Task
 from .background import _poll_masumi_jobs_async
 from .storage import storage
@@ -211,6 +211,9 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             for task in submitted_tasks:
                 await tracer.markdown(f"  • {task['agent']} [{task['masumi_job_id'][:8]}...]")
         
+        # Update state_ref to get any budget changes from tool calls
+        state_ref = get_current_state_ref() or state_ref
+        
         # Phase 2: Poll agent tasks in background
         logger.info("Phase 2: Starting background polling for agent task results...")
         if tracer:
@@ -274,6 +277,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     "masumi_job_id": task.id,
                     "agent": task.agent_name
                 })
+                logger.info(f"Refinement: Successfully submitted task to {task.agent_name}")
                 
                 # Show budget info
                 if tracer and 'budget_info' in result:
@@ -286,10 +290,14 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             
             # Handle errors
             elif result.get('error'):
+                logger.error(f"Refinement submission error: {result}")
                 await handle_job_submission_error(result, refinement_result.new_items, i, tracer)
         
         if tracer:
             await tracer.markdown(f"\n✅ **Submitted {len(second_round_tasks)} deep-dive tasks**")
+        
+        # Update state_ref to get any budget changes from refinement tool calls
+        state_ref = get_current_state_ref() or state_ref
         
         # Phase 4: Poll for second round results
         logger.info("Phase 4: Second round results phase...")
@@ -357,6 +365,9 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown(f"- Context usage: {token_info['percentage_used']:.1f}%")
             if token_info['truncation_applied']:
                 await tracer.markdown("- ⚠️ Some content was truncated to fit context window")
+            
+            # Get the most current state before showing final budget
+            state_ref = get_current_state_ref() or state_ref
             
             # Show final budget summary
             final_budget = StateManager.get_budget_summary(state_ref)
