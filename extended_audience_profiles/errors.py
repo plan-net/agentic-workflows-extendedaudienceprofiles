@@ -37,8 +37,6 @@ async def handle_job_submission_error(
                 budget_info = result['budget_info']
                 await tracer.markdown(f"   - Expected cost: {budget_info.get('expected_cost', 0):.1f} USDM")
                 await tracer.markdown(f"   - Agent remaining: {budget_info.get('remaining', 0):.1f} USDM")
-        elif 'ask-the-crowd' in str(agent_name) and 'array for option field' in error_msg:
-            await tracer.markdown(f"⚠️ Skipped {agent_name}: requires array format for options")
         else:
             await tracer.markdown(f"❌ Failed to submit to {agent_name}: {error_msg[:200]}... (type: {error_type})")
 

@@ -56,7 +56,7 @@ agents:
  
   - name: "ask-the-crowd"
     endpoint: "http://138.68.88.241:8000/Ask%20The%20Crowd"
-    description: "EU-specific crowd opinion and survey platform with web search. Validates statements using real consumer feedback. Best used in refinement phase to test insights from initial research. Start prompts with 'Survey:' or 'Opinion:' followed by your statement. Demographics (gender/age) are set via separate fields, not in the statement."
+    description: "EU-specific crowd opinion and survey platform with web search. Validates statements using real consumer feedback. Best used in refinement phase to test insights from initial research. The system will handle proper formatting based on the input schema."
     price: 2.0  # Expected cost per job in USDM
     max_total_spend: 8.0  # Can call this agent until 8.0 USDM is spent
     enabled: true
@@ -78,10 +78,9 @@ agents:
     limitations:
       - "EU countries only - no data from US, Asia, or other markets"
       - "Requires statement format (not questions) - frame as assertions to validate"
-      - "Must start with 'Survey:' or 'Opinion:' to specify analysis type"
-      - "IMPORTANT: Do NOT include demographics in statement - use separate gender/age input fields"
+      - "Demographics are set via separate input fields (gender, age_min, age_max)"
       - "Write statements as you would present them to actual survey participants"
-      - "Minimum age requirement: 18+ (enforced via age field)"
+      - "Minimum age requirement: 18+ (enforced via age_min field)"
       - "Best results when used to validate specific findings from initial research"
       - "Limited to 5 opinion soundbites per query"
       - "Survey responses use 5-point scale (Strongly Disagree to Strongly Agree)"

@@ -6,7 +6,7 @@ import os
 import yaml
 import asyncio
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from pathlib import Path
 from masumi import Config, Purchase
 import logging
@@ -187,6 +187,9 @@ class MasumiClient:
             "identifier_from_purchaser": identifier
         }
         
+        # Log payload for debugging
+        logger.debug(f"Sending payload to {agent_name}: {json.dumps(payload, indent=2)}")
+        
         response = await self._make_request(
             'POST',
             f"{endpoint.rstrip('/')}/start_job",
@@ -195,8 +198,14 @@ class MasumiClient:
         )
         
         if response.status_code == 400:
+            # Log the full error details
+            logger.error(f"API validation error for {agent_name}:")
+            logger.error(f"  Status: {response.status_code}")
+            logger.error(f"  Response: {response.text}")
+            logger.error(f"  Sent data: {json.dumps(input_data, indent=2)}")
             raise ValueError(f"Invalid input data: {response.text}")
         elif response.status_code != 200:
+            logger.error(f"API error for {agent_name}: HTTP {response.status_code}, Response: {response.text}")
             raise RuntimeError(f"Failed to start job: HTTP {response.status_code}")
         
         data = response.json()
@@ -340,21 +349,76 @@ class MasumiClient:
             if not field_id:
                 continue
             
+            # Determine the correct type for this field
+            field_type = item.get('type', 'string')
+            
+            # Get validations for all fields
+            validations = item.get('validations', [])
+            
+            # For option fields, check if it should be an array
+            if field_type == 'option':
+                data = item.get('data', {})
+                
+                # Check for explicit array validation
+                has_array_validation = any(
+                    v.get('validation') == 'array' or 
+                    v.get('validation') == 'multiple' or
+                    v.get('type') == 'array'
+                    for v in validations
+                )
+                
+                # Check for multi-select indicators in data
+                is_multiselect = (
+                    data.get('multiple') == True or
+                    data.get('multiselect') == True or
+                    data.get('type') == 'multiselect' or
+                    # Also check if the field expects an array in its structure
+                    isinstance(data.get('default'), list) or
+                    isinstance(data.get('value'), list)
+                )
+                
+                # Check field naming conventions (generalized heuristic)
+                field_suggests_multiple = (
+                    field_id.endswith('s') and not field_id.endswith('ss') or
+                    'multiple' in field_id.lower() or
+                    'options' in field_id.lower() or
+                    'selections' in field_id.lower()
+                )
+                
+                # If any indicator suggests this is a multi-select, use array type
+                if has_array_validation or is_multiselect or field_suggests_multiple:
+                    schema_type = 'array'
+                else:
+                    schema_type = 'string'
+            else:
+                schema_type = self._map_type(field_type)
+            
             # Build property schema
             prop = {
-                'type': self._map_type(item.get('type', 'string')),
+                'type': schema_type,
                 'description': item.get('name', field_id)
             }
+            
+            # Store original type for reference
+            prop['_original_type'] = field_type
             
             # Add constraints
             if placeholder := item.get('data', {}).get('placeholder'):
                 prop['example'] = placeholder
             
-            if item.get('type') == 'option' and 'values' in item.get('data', {}):
-                prop['enum'] = item['data']['values']
+            # For option fields, handle enum values
+            if field_type == 'option' and 'values' in item.get('data', {}):
+                if schema_type == 'array':
+                    # For array type, enum defines the allowed items
+                    prop['items'] = {
+                        'type': 'string',
+                        'enum': item['data']['values']
+                    }
+                else:
+                    # For string type, enum defines the allowed values
+                    prop['enum'] = item['data']['values']
             
             # Check if required
-            validations = item.get('validations', [])
             is_optional = any(v.get('validation') == 'optional' and v.get('value') == 'true' 
                             for v in validations)
             
@@ -393,4 +457,206 @@ class MasumiClient:
             'object': 'object'
         }
         return mapping.get(masumi_type.lower(), 'string')
+    
+    def validate_input_against_schema(self, input_data: Dict[str, Any], schema: Dict[str, Any]) -> Tuple[bool, List[str], Dict[str, Any]]:
+        """
+        Validate input data against a JSON schema.
+        
+        Args:
+            input_data: The input data to validate
+            schema: The JSON schema to validate against
+            
+        Returns:
+            Tuple of (is_valid, errors, transformed_data)
+        """
+        errors = []
+        transformed_data = input_data.copy()
+        
+        # Check required fields
+        for field in schema.get('required', []):
+            if field not in input_data:
+                errors.append(f"Missing required field: '{field}'")
+        
+        # Validate and transform each field
+        properties = schema.get('properties', {})
+        for field, value in input_data.items():
+            if field not in properties:
+                # Field not in schema - could be extra field
+                continue
+                
+            field_schema = properties[field]
+            expected_type = field_schema.get('type')
+            original_type = field_schema.get('_original_type')
+            
+            # Special handling for option fields that need index transformation
+            if original_type == 'option' and 'enum' in field_schema:
+                # Check if value is a string that needs to be converted to index
+                if isinstance(value, str) and value in field_schema['enum']:
+                    # Convert enum value to its index
+                    index = field_schema['enum'].index(value)
+                    # Option fields always need to be arrays of indices
+                    transformed_data[field] = [index]
+                    logger.debug(f"Transformed '{field}' from enum value '{value}' to index array [{index}]")
+                    continue
+                elif isinstance(value, list) and len(value) > 0 and isinstance(value[0], str):
+                    # Handle array of enum values
+                    indices = []
+                    for v in value:
+                        if v in field_schema['enum']:
+                            indices.append(field_schema['enum'].index(v))
+                        else:
+                            errors.append(f"Invalid enum value '{v}' for field '{field}'")
+                    if not errors:
+                        transformed_data[field] = indices
+                        logger.debug(f"Transformed '{field}' from enum values {value} to indices {indices}")
+                    continue
+            
+            # For array fields with enum items
+            if expected_type == 'array' and 'items' in field_schema and 'enum' in field_schema.get('items', {}):
+                enum_values = field_schema['items']['enum']
+                if isinstance(value, str) and value in enum_values:
+                    # Convert single enum value to array with index
+                    index = enum_values.index(value)
+                    transformed_data[field] = [index]
+                    logger.debug(f"Transformed '{field}' from enum value '{value}' to index array [{index}]")
+                    continue
+                elif isinstance(value, list):
+                    # Convert array of enum values to indices
+                    indices = []
+                    for v in value:
+                        if isinstance(v, str) and v in enum_values:
+                            indices.append(enum_values.index(v))
+                        elif isinstance(v, int):
+                            # Already an index
+                            indices.append(v)
+                        else:
+                            errors.append(f"Invalid enum value '{v}' for field '{field}'")
+                    if not errors:
+                        transformed_data[field] = indices
+                        logger.debug(f"Transformed '{field}' from enum values {value} to indices {indices}")
+                    continue
+            
+            # Type validation and transformation
+            if expected_type == 'array':
+                if not isinstance(value, list):
+                    # For arrays, wrap non-list values in a list
+                    if value is None:
+                        # Skip None values for optional fields
+                        if field not in schema.get('required', []):
+                            continue
+                        else:
+                            errors.append(f"Required field '{field}' cannot be null")
+                    else:
+                        # Convert single value to array
+                        transformed_data[field] = [value]
+                        logger.debug(f"Transformed field '{field}' from {type(value).__name__} to array: {value} -> [{value}]")
+            
+            elif expected_type == 'number' or expected_type == 'integer':
+                if not isinstance(value, (int, float)):
+                    try:
+                        transformed_data[field] = float(value) if expected_type == 'number' else int(value)
+                    except (ValueError, TypeError):
+                        errors.append(f"Field '{field}' must be a {expected_type}, got {type(value).__name__}")
+            
+            elif expected_type == 'boolean':
+                if not isinstance(value, bool):
+                    if isinstance(value, str):
+                        transformed_data[field] = value.lower() in ('true', 'yes', '1')
+                    else:
+                        errors.append(f"Field '{field}' must be a boolean, got {type(value).__name__}")
+            
+            elif expected_type == 'string':
+                if not isinstance(value, str):
+                    transformed_data[field] = str(value)
+            
+            # Enum validation (for non-option fields)
+            if 'enum' in field_schema and original_type != 'option' and value not in field_schema['enum']:
+                errors.append(f"Field '{field}' must be one of {field_schema['enum']}, got '{value}'")
+        
+        return len(errors) == 0, errors, transformed_data
+    
+    def build_schema_example(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build an example input based on schema alone.
+        
+        Args:
+            schema: The JSON schema
+            
+        Returns:
+            Example input dictionary
+        """
+        example = {}
+        properties = schema.get('properties', {})
+        required_fields = schema.get('required', [])
+        
+        for field, field_schema in properties.items():
+            # Always include required fields, optionally include others for clarity
+            if field in required_fields or len(properties) <= 10:  # Include all if not too many
+                # For array types with enum items, provide a single-item array example
+                if field_schema.get('type') == 'array' and 'items' in field_schema:
+                    items_schema = field_schema['items']
+                    if 'enum' in items_schema and items_schema['enum']:
+                        example[field] = [items_schema['enum'][0]]
+                    else:
+                        example[field] = ['example']
+                else:
+                    example[field] = self._get_default_for_type(field_schema)
+        
+        return example
+    
+    def _get_default_for_type(self, field_schema: Dict[str, Any]) -> Any:
+        """Get a default value for a field based on its schema."""
+        field_type = field_schema.get('type')
+        original_type = field_schema.get('_original_type')
+        
+        # Use provided example or placeholder first
+        if 'example' in field_schema:
+            return field_schema['example']
+        if 'placeholder' in field_schema:
+            return field_schema['placeholder']
+        
+        # For option fields, return the string value (not index)
+        # The validation will convert it to index when needed
+        if original_type == 'option' and 'enum' in field_schema and field_schema['enum']:
+            # Return the first enum value as a string
+            return field_schema['enum'][0]
+        
+        # Use first enum value if available
+        if 'enum' in field_schema and field_schema['enum']:
+            return field_schema['enum'][0]
+        
+        # Simple type defaults
+        type_defaults = {
+            'string': 'example',
+            'number': 1.0,
+            'integer': 1,
+            'boolean': True,
+            'array': [],
+            'object': {},
+            'null': None
+        }
+        
+        # Check for minimum values for numbers
+        if field_type in ('number', 'integer') and 'minimum' in field_schema:
+            return field_schema['minimum']
+        
+        return type_defaults.get(field_type, None)
+    
+    def transform_input_for_api(self, input_data: Dict[str, Any], agent_name: str) -> Any:
+        """
+        Transform input data to match the API's expected format.
+        
+        Some APIs expect input_data as an array of field objects rather than a dictionary.
+        This method detects and applies the appropriate transformation.
+        
+        Args:
+            input_data: Dictionary of field values
+            agent_name: Name of the agent (for logging)
+            
+        Returns:
+            Transformed input data in the format expected by the API
+        """
+        # For now, return as-is. In the future, we can detect from schema
+        # or API responses whether array format is needed
+        return input_data
     

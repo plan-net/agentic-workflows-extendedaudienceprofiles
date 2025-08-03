@@ -5,8 +5,9 @@ from typing import Dict, Any, List, Optional
 from agents import function_tool
 from .masumi import MasumiClient
 from .state import get_state_actor
-from .exceptions import AgentNotFoundError, MasumiNetworkError
+from .exceptions import AgentNotFoundError, MasumiNetworkError, ValidationError
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +104,46 @@ async def get_agent_input_schema(agent_name: str) -> Dict[str, Any]:
         # Get schema from the agent
         schema = await client.get_agent_schema(agent_name)
         
+        # Build example input
+        example_input = client.build_schema_example(schema)
+        
+        # Build detailed field instructions
+        field_instructions = []
+        for field, field_schema in schema.get('properties', {}).items():
+            field_type = field_schema.get('type', 'string')
+            required = field in schema.get('required', [])
+            
+            instruction = f"- {field} ({field_type})"
+            if required:
+                instruction += " [REQUIRED]"
+            else:
+                instruction += " [optional]"
+            
+            if 'enum' in field_schema:
+                # Check if this is an option field
+                if field_schema.get('_original_type') == 'option':
+                    instruction += f" - Valid values: {field_schema['enum']} (will be auto-converted to indices)"
+                else:
+                    instruction += f" - Must be one of: {field_schema['enum']}"
+            if 'description' in field_schema:
+                instruction += f" - {field_schema['description']}"
+            
+            field_instructions.append(instruction)
+        
         return {
             'success': True,
             'agent_name': agent_name,
             'schema': schema,
-            'instructions': f"Format your input according to the schema for {agent_name}"
+            'example_input': example_input,
+            'field_instructions': '\n'.join(field_instructions),
+            'instructions': f"""To use {agent_name}, provide input_data as a dictionary with these fields:
+
+{chr(10).join(field_instructions)}
+
+Example valid input:
+{example_input}
+
+IMPORTANT: The input_data parameter must be a dictionary matching this schema, not a string."""
         }
     except AgentNotFoundError:
         # Already handled above
@@ -180,14 +216,80 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             # Actor not initialized, proceed without budget check
             logger.warning("StateActor not initialized, skipping budget check")
         
+        # Get schema and validate input
+        schema = None
+        try:
+            schema = await client.get_agent_schema(agent_name)
+            
+            # Validate and transform input data
+            is_valid, errors, transformed_data = client.validate_input_against_schema(input_data, schema)
+            
+            if not is_valid:
+                # Build helpful error message
+                example = client.build_schema_example(schema)
+                error_msg = f"Input validation failed for {agent_name}:\n"
+                error_msg += "\n".join(f"  - {error}" for error in errors)
+                error_msg += f"\n\nExpected format example:\n{example}"
+                
+                # Release budget reservation on validation error
+                try:
+                    actor = get_state_actor()
+                    await actor.release_reservation.remote(agent_name, expected_cost)
+                except RuntimeError:
+                    pass
+                
+                return {
+                    'success': False,
+                    'error': error_msg,
+                    'job_id': None,
+                    'error_type': 'validation_error',
+                    'schema': schema,
+                    'example': example
+                }
+            
+            # Use transformed data for the job
+            input_data = transformed_data
+            
+        except (OSError, RuntimeError) as e:
+            # Network or runtime errors getting schema - log but continue
+            logger.warning(f"Could not validate schema for {agent_name}: {str(e)}")
+            # Continue with original input_data
+        
         # Step 1: Start the job
         logger.info(f"Starting job with agent: {agent_name}")
         logger.info(f"Input data: {input_data}")
-        job_response = await client.start_job(agent_name, input_data)
-        job_id = job_response['job_id']
-        payment_id = job_response['payment_id']
         
-        logger.info(f"Job started with ID: {job_id}, payment ID: {payment_id}")
+        try:
+            job_response = await client.start_job(agent_name, input_data)
+            job_id = job_response['job_id']
+            payment_id = job_response['payment_id']
+            
+            logger.info(f"Job started with ID: {job_id}, payment ID: {payment_id}")
+            
+        except ValueError as ve:
+            # Validation error from API - provide helpful response
+            logger.error(f"Job submission validation error: {str(ve)}")
+            
+            # Try to get schema for better error message
+            example = None
+            if schema:
+                example = client.build_schema_example(schema)
+            
+            # Release budget reservation
+            try:
+                actor = get_state_actor()
+                await actor.release_reservation.remote(agent_name, expected_cost)
+            except RuntimeError:
+                pass
+            
+            return {
+                'success': False,
+                'error': f"Input validation error: {str(ve)}",
+                'job_id': None,
+                'error_type': 'validation_error',
+                'schema': schema,
+                'example': example
+            }
         
         # Step 2: Create purchase to complete payment
         logger.info(f"Creating purchase for job {job_id}")
@@ -267,12 +369,12 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             raise MasumiNetworkError("job execution", agent_name, e)
         
     except ValueError as ve:
-        # Validation errors
-        logger.warning(f"Validation error for {agent_name}: {str(ve)}")
+        # Validation errors - these should have been caught earlier
+        logger.warning(f"Unexpected validation error for {agent_name}: {str(ve)}")
         return {
             'success': False,
             'error': str(ve),
-            'result': None,
+            'job_id': None,
             'error_type': 'validation_error'
         }
     except RuntimeError as re:
@@ -281,7 +383,7 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
         return {
             'success': False,
             'error': str(re),
-            'result': None,
+            'job_id': None,
             'error_type': 'api_error'
         }
     except (TypeError, AttributeError) as e:
@@ -290,6 +392,6 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
         return {
             'success': False,
             'error': f"Internal error: {str(e)}",
-            'result': None,
+            'job_id': None,
             'error_type': 'internal_error'
         }
