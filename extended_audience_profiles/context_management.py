@@ -59,7 +59,7 @@ class ContextManager:
         "gpt-4-turbo": 128000,
         "gpt-4o": 128000,
         "gpt-4o-mini": 128000,
-        "gpt-4.1": 128000,
+        "gpt-4.1": 1047576,  # 1M+ context window
     }
     
     # Model to encoding mapping (for tiktoken)

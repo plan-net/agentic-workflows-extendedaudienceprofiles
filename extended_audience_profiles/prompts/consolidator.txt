@@ -24,14 +24,15 @@ Step 1: Carefully read ALL research results and extract sources
 - Flag any contradictions between sources
 
 Step 2: Design Your Custom Profile Structure
-Forget cookie-cutter templates. Create an outline that serves THIS specific audience:
+Let the research guide your structure - create an outline that serves THIS specific audience:
 - Start with the original audience description/question - what are they really asking?
-- Identify the most surprising, actionable, or compelling insights
-- Group related findings into natural narrative themes
-- Plan a logical flow that builds understanding progressively
-- Consider: What story does this data want to tell?
-- Design sections that highlight what makes this audience unique
-- Think about the reader's journey through your profile
+- Identify ALL the valuable insights, not just the headlines
+- Group findings into natural themes that deserve deep exploration
+- Plan a progressive journey from essential insights to nuanced understanding
+- Consider: What complete story does this data tell?
+- Design sections that fully explore what makes this audience unique
+- Remember: This is an EXTENDED profile - every significant theme deserves thorough treatment
+- Think depth: If a section could be a standalone article, you're on the right track
 
 Step 3: Choose Your Presentation Toolkit
 Select formats that make your insights shine:
@@ -61,32 +62,67 @@ Select formats that make your insights shine:
 - Venn diagrams (using ASCII art)
 - Hierarchical lists showing priorities
 
-Step 4: Write an Engaging, Multi-Format Profile
-Transform research into a page-turner:
+Step 4: Write a Comprehensive, Multi-Format Extended Profile
+Transform research into an authoritative resource:
 
-**Opening Hook**:
-- Start with a compelling insight or surprising statistic
-- Paint a vivid picture of your audience in one paragraph
-- Promise value - what will readers learn?
+**Opening Strategy** (Aim for 1000+ words):
+- Start with your most powerful insight - make it impossible to stop reading
+- Provide a comprehensive executive summary that stands alone
+- Map out the journey ahead - what complete picture will emerge?
+- Include an "At a Glance" section with 10-15 key statistics
 
-**Narrative Techniques**:
-- Alternate between zoomed-in details and bird's-eye summaries
-- Use short paragraphs for impact, longer ones for nuance
-- Create rhythm with varied section lengths
-- Tell mini-stories that illustrate data points
+**Depth Techniques for Extended Analysis**:
+- Don't just state findings - explore their origins, implications, and applications
+- When data surprises you, dedicate space to understanding why
+- Create detailed subsections within each major theme
+- Use the "iceberg principle": Show the tip, then dive deep below the surface
+- Include confidence levels and data ranges, not just averages
+- Address contradictions and edge cases explicitly
 
-**Engagement Strategies**:
-- Use "you" to speak directly to readers
-- Ask rhetorical questions to maintain curiosity
-- Build tension and resolution within sections
-- Use analogies to make complex data relatable
+**Narrative Expansion**:
+- Develop full scenes and scenarios, not just bullet points
+- Create detailed day-in-the-life narratives (500-1000 words each)
+- Build comprehensive personas with backstories and motivations
+- Use extended examples that fully illustrate complex behaviors
+- Develop mini-case studies from research findings
+
+**Progressive Revelation**:
+- Layer 1: What everyone needs to know (executive summary)
+- Layer 2: What practitioners need to apply (main sections)
+- Layer 3: What experts need to excel (deep dives and nuanced analysis)
+- Layer 4: What innovators need to lead (implications and future projections)
+
+**Maintaining Engagement Across 15,000+ Words**:
+- Create natural "chapters" with their own narrative arcs
+- Use cliffhangers between sections
+- Vary your presentation formats throughout
+- Include "What This Means for You" subsections
+- Build toward revelations, not just conclusions
 
 **Visual Breathing Room**:
-- Break up text with formatted elements every 2-3 paragraphs
-- Use white space strategically
-- Create visual hierarchy with formatting
+- Use formatted elements liberally - this is a long read
+- Create section breaks with visual elements
+- Include data visualization every 500-1000 words
+- Design for both continuous reading and reference use
 
-Remember: Aim for 1500-2500 words, but make every word earn its place.
+**IMPORTANT: This is an EXTENDED Audience Profile**
+Create a comprehensive analysis of 15,000-20,000 words. You have approximately 30,000 tokens of output capacity - use it wisely to deliver truly in-depth insights. This is not a summary; it's a complete handbook about your audience.
+
+**Depth Principles**:
+- Start with the most important insights, then progressively reveal deeper layers
+- For each major theme, explore implications, contradictions, and edge cases
+- When you introduce a statistic, unpack what it means
+- When you identify a pattern, trace its full implications
+- Think: "What would an expert want to know about this audience?"
+
+**Consider techniques like**:
+- Extended persona narratives (500-1000 words) that bring data to life
+- Deep-dive explorations when you find surprising or counterintuitive findings
+- Multi-layered analysis: what the data shows → what it means → how to act on it
+- Rich examples and mini-case studies extracted from the research
+- Comprehensive data breakdowns that reveal nuance, not just averages
+
+Remember: You have significant output capacity. A rushed or surface-level analysis wastes this opportunity. Aim to use 60-80% of your capacity for a truly extended profile.
 
 Step 5: Create Original Sources Table
 Before the appendix, add an "## Original Sources" section with a comprehensive table of all sources:
@@ -213,3 +249,12 @@ SOURCE EXTRACTION EXAMPLES:
 - If you see: "According to Urban Natural's 2024 trends report" → Extract as "Urban Natural Trends Report, 2024"
 
 Remember: Your credibility depends on accurate source attribution, but your value comes from making that data sing. Every insight must be traceable to the original research, but every sentence should make the reader want to read the next one.
+
+FINAL CHECK: You're creating an EXTENDED audience profile. Ask yourself:
+- Have I explored every significant finding in depth?
+- Does each section provide comprehensive understanding, not just overview?
+- Have I used at least 60% of my output capacity (~20,000 tokens)?
+- Would an expert say "this is thorough" or "this needs more depth"?
+- Have I transformed ALL the valuable research into actionable insights?
+
+This is your opportunity to create the definitive guide to this audience. Use it fully.

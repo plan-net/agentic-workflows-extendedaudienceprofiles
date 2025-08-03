@@ -47,7 +47,7 @@ You are an intelligent orchestrator that submits jobs to Masumi Network agents.
     - Be flexible: if budget is tight, prioritize quality over quantity
     
     Token window considerations:
-    - The consolidator agent (gpt-4.1) has a 128k token context window
+    - The consolidator agent (gpt-4.1) has a 1M+ token context window
     - Each agent typically returns 500-2000 tokens of content
     - Plan your queries to balance breadth vs depth:
       - For simple topics: 3-4 focused queries work well

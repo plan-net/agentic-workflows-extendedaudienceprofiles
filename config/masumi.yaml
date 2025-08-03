@@ -2,7 +2,7 @@
 # All prices are in USDM (USD-pegged stablecoin on Masumi Network)
 # 1 USDM = 1,000,000 lovelace
 budget:
-  total_budget: 30.0  # Total budget across all agents in USDM
+  total_budget: 40.0  # Total budget across all agents in USDM
   network: "Preprod"  # Network for Masumi transactions (Preprod/Mainnet)
   
 # Available agents configuration
@@ -57,8 +57,8 @@ agents:
   - name: "ask-the-crowd"
     endpoint: "http://138.68.88.241:8000/Ask%20The%20Crowd"
     description: "EU-specific crowd opinion and survey platform with web search. Validates statements using real consumer feedback. Best used in refinement phase to test insights from initial research. The system will handle proper formatting based on the input schema."
-    price: 2.0  # Expected cost per job in USDM
-    max_total_spend: 8.0  # Can call this agent until 8.0 USDM is spent
+    price: 5.0  # Expected cost per job in USDM
+    max_total_spend: 15.0  # Can call this agent until 8.0 USDM is spent
     enabled: true
     capabilities:
       - "Survey analysis: Get responses on 5-point scale (strongly disagree to strongly agree) from EU consumers"
