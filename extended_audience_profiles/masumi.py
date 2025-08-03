@@ -176,14 +176,16 @@ class MasumiClient:
             
             result = await purchase.create_purchase_request()
             
-            # Calculate cost but don't record here - that's handled by the caller
+            # Calculate cost from the purchase result, not job response
             # Convert from lovelace to USDM: 1 USDM = 1,000,000 lovelace
-            amounts = job_response.get('amounts', [])
-            cost = amounts[0].get('amount', 0) / 1_000_000 if amounts else 0.0
+            paid_funds = result.get('data', {}).get('PaidFunds', [])
+            cost = 0.0
+            if paid_funds and paid_funds[0].get('amount'):
+                cost = int(paid_funds[0].get('amount', 0)) / 1_000_000
             
             # Debug logging for cost calculation
             logger.info(f"Cost calculation for {agent_name}:")
-            logger.info(f"  - amounts from job_response: {amounts}")
+            logger.info(f"  - PaidFunds from purchase result: {paid_funds}")
             logger.info(f"  - calculated cost: {cost} USDM")
             
             return {

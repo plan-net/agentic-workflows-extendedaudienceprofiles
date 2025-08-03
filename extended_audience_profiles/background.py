@@ -98,7 +98,10 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
     """Async implementation of job polling"""
     job = StateManager.get_job(state_ref, job_id)
     if not job:
-        logger.error(f"Job {job_id} not found")
+        logger.error(f"Job {job_id} not found at start of polling")
+        # Log all jobs in state to debug
+        state = ray.get(state_ref)
+        logger.error(f"Jobs in state: {list(state.jobs.keys())}")
         return state_ref
     logger.info(f"Starting background task polling for job {job_id}")
     logger.info(f"Total agent tasks to poll: {len(job.tasks)}")

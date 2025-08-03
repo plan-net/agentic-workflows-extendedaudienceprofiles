@@ -108,6 +108,12 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         job_id, state_ref = StateManager.create_job(state_ref, audience_description)
         logger.info(f"Created job {job_id}")
         
+        # Verify job was created
+        job = StateManager.get_job(state_ref, job_id)
+        if not job:
+            raise Exception(f"Failed to create job - job {job_id} not found in state")
+        logger.info(f"Job {job_id} verified in state")
+        
         # Save initial job metadata
         try:
             await storage.save_job_metadata(
@@ -226,7 +232,12 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         # Get the completed job execution results
         results = StateManager.get_job_results(state_ref, job_id)
         
-        if not results['is_complete']:
+        # Check for error in results
+        if 'error' in results:
+            logger.error(f"Error getting job results: {results['error']}")
+            raise Exception(f"Job error: {results['error']}")
+        
+        if not results.get('is_complete', False):
             raise Exception("Not all jobs completed successfully")
         
         logger.info(f"All jobs complete. Successful: {results['completed_jobs']}, Failed: {results['failed_jobs']}")
@@ -314,7 +325,12 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             # Get all results (both rounds)
             results = StateManager.get_job_results(state_ref, job_id)
             
-            if not results['is_complete']:
+            # Check for error in results
+            if 'error' in results:
+                logger.error(f"Error getting job results after second round: {results['error']}")
+                raise Exception(f"Job error: {results['error']}")
+            
+            if not results.get('is_complete', False):
                 raise Exception("Not all jobs completed successfully")
         else:
             if tracer:
