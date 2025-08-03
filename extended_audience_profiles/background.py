@@ -40,7 +40,7 @@ async def _process_task_status(task, status_result, job_id, tracer=None):
             hash_fields = {k: v for k, v in status_result.items() if 'hash' in k.lower()}
             
             metadata = {
-                'input_data': task.input_data if hasattr(task, 'input_data') else {},
+                'input_data': task.input_data,
                 'started_at': task.started_at,
                 'completed_at': time.time(),
                 'duration': time.time() - task.started_at if task.started_at else None,

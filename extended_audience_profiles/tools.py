@@ -230,6 +230,7 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                 'success': True,
                 'job_id': job_id,
                 'agent_name': agent_name,
+                'input_data': input_data,
                 'status': 'submitted',
                 'message': f"Job submitted to {agent_name}. Will complete in 5-20 minutes.",
                 'budget_info': {

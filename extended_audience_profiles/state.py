@@ -37,6 +37,7 @@ class Task:
     """Individual agent task"""
     id: str
     agent_name: str
+    input_data: Dict[str, Any] = field(default_factory=dict)
     status: str = "pending"  # pending, running, completed, failed
     result: Optional[str] = None
     error: Optional[str] = None
@@ -200,7 +201,7 @@ class StateActor:
                 results[task.id] = {
                     "agent_name": task.agent_name,
                     "result": task.result,
-                    "input_data": task.input_data if hasattr(task, 'input_data') else {},
+                    "input_data": task.input_data,
                     "duration": task.completed_at - task.started_at if task.started_at else None
                 }
         

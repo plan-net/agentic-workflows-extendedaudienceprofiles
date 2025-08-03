@@ -141,7 +141,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             if result.get('success') and result.get('job_id'):
                 task = Task(
                     id=result['job_id'],  # This is the Masumi job ID
-                    agent_name=result.get('agent_name', 'Unknown')
+                    agent_name=result.get('agent_name', 'Unknown'),
+                    input_data=result.get('input_data', {})
                 )
                 await actor.add_task.remote(job_id, task)
                 submitted_tasks.append({
@@ -249,7 +250,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             if result.get('success') and result.get('job_id'):
                 task = Task(
                     id=result['job_id'],
-                    agent_name=result.get('agent_name', 'Unknown')
+                    agent_name=result.get('agent_name', 'Unknown'),
+                    input_data=result.get('input_data', {})
                 )
                 await actor.add_task.remote(job_id, task)
                 second_round_tasks.append({
