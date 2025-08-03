@@ -10,6 +10,27 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Global actor instance
+_actor = None
+
+def get_state_actor():
+    """Get the state actor."""
+    global _actor
+    if _actor is None:
+        raise RuntimeError("StateActor not initialized. Call init_state_actor() first.")
+    return _actor
+
+def init_state_actor(budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]):
+    """Initialize the state actor."""
+    global _actor
+    if _actor is not None:
+        logger.warning("StateActor already initialized")
+        return _actor
+    
+    _actor = StateActor.remote(budget_config, agents_config)
+    logger.info("StateActor initialized")
+    return _actor
+
 
 @dataclass
 class Task:
@@ -37,67 +58,49 @@ class Job:
         return all(t.status in ["completed", "failed"] for t in self.tasks)
 
 
-@dataclass
-class AppState:
-    """Single application state combining jobs and budget"""
-    # Budget tracking
-    total_budget: float
-    total_spent: float = 0.0
-    agent_spending: Dict[str, float] = field(default_factory=dict)
-    agent_limits: Dict[str, float] = field(default_factory=dict)
-    agent_prices: Dict[str, float] = field(default_factory=dict)
-    reserved_amounts: Dict[str, float] = field(default_factory=dict)
-    
-    # Active jobs
-    jobs: Dict[str, Job] = field(default_factory=dict)
 
-
-class StateManager:
-    """Single state manager for the entire application"""
+@ray.remote(max_restarts=3)
+class StateActor:
+    """Centralized state management actor for the entire application"""
     
-    @staticmethod
-    def initialize(budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]) -> ray.ObjectRef:
+    def __init__(self, budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]):
         """Initialize application state"""
-        state = AppState(
-            total_budget=budget_config.get('total_budget', float('inf')),
-            agent_prices={agent['name']: agent.get('price', 0.0) for agent in agents_config},
-            agent_limits={agent['name']: agent.get('max_total_spend', float('inf')) for agent in agents_config}
-        )
-        ref = ray.put(state)
-        logger.info(f"Initialized app state with budget: {state.total_budget}")
-        return ref
+        # Budget state
+        self.total_budget = budget_config.get('total_budget', float('inf'))
+        self.total_spent = 0.0
+        self.agent_spending = {}
+        self.agent_limits = {agent['name']: agent.get('max_total_spend', float('inf')) for agent in agents_config}
+        self.agent_prices = {agent['name']: agent.get('price', 0.0) for agent in agents_config}
+        self.reserved_amounts = {}
+        
+        # Job state
+        self.jobs = {}
+        
+        logger.info(f"StateActor initialized with budget: {self.total_budget}")
     
-    @staticmethod
-    def create_job(ref: ray.ObjectRef, audience: str) -> Tuple[str, ray.ObjectRef]:
+    def create_job(self, audience: str) -> str:
         """Create a new job"""
-        state = ray.get(ref)
         job_id = str(uuid.uuid4())
         job = Job(id=job_id, audience=audience, tasks=[])
-        state.jobs[job_id] = job
-        new_ref = ray.put(state)
+        self.jobs[job_id] = job
         logger.info(f"Created job {job_id}")
-        return job_id, new_ref
+        return job_id
     
-    @staticmethod
-    def add_task(ref: ray.ObjectRef, job_id: str, task: Task) -> ray.ObjectRef:
+    def add_task(self, job_id: str, task: Task) -> bool:
         """Add task to a job"""
-        state = ray.get(ref)
-        if job_id in state.jobs:
-            state.jobs[job_id].tasks.append(task)
+        if job_id in self.jobs:
+            self.jobs[job_id].tasks.append(task)
             logger.info(f"Added task {task.id} to job {job_id}")
-        new_ref = ray.put(state)
-        return new_ref
+            return True
+        return False
     
-    @staticmethod
-    def update_tasks(ref: ray.ObjectRef, job_id: str, updates: List[Dict[str, Any]]) -> ray.ObjectRef:
+    def update_tasks(self, job_id: str, updates: List[Dict[str, Any]]) -> bool:
         """Batch update tasks"""
-        state = ray.get(ref)
-        
-        if job_id not in state.jobs:
+        if job_id not in self.jobs:
             logger.warning(f"Job {job_id} not found")
-            return ray.put(state)
+            return False
         
-        job = state.jobs[job_id]
+        job = self.jobs[job_id]
         task_map = {task.id: task for task in job.tasks}
         
         for update in updates:
@@ -120,32 +123,28 @@ class StateManager:
             job.completed_at = time.time()
             logger.info(f"Job {job_id} completed")
         
-        new_ref = ray.put(state)
         logger.info(f"Updated {len(updates)} tasks in job {job_id}")
-        return new_ref
+        return True
     
-    @staticmethod
-    def reserve_budget(ref: ray.ObjectRef, agent_name: str, expected_cost: float) -> Tuple[bool, str, ray.ObjectRef]:
+    def reserve_budget(self, agent_name: str, expected_cost: float) -> Tuple[bool, str, Dict[str, Any]]:
         """Reserve budget for a job"""
-        state = ray.get(ref)
-        
         # Check agent limit
-        agent_limit = state.agent_limits.get(agent_name, float('inf'))
-        agent_spent = state.agent_spending.get(agent_name, 0.0)
-        agent_reserved = state.reserved_amounts.get(agent_name, 0.0)
+        agent_limit = self.agent_limits.get(agent_name, float('inf'))
+        agent_spent = self.agent_spending.get(agent_name, 0.0)
+        agent_reserved = self.reserved_amounts.get(agent_name, 0.0)
         agent_remaining = agent_limit - agent_spent - agent_reserved
         
         # Check total budget
-        total_reserved = sum(state.reserved_amounts.values())
-        total_remaining = state.total_budget - state.total_spent - total_reserved
+        total_reserved = sum(self.reserved_amounts.values())
+        total_remaining = self.total_budget - self.total_spent - total_reserved
         
         # Can afford if both agent and total budget allow
         can_afford = expected_cost <= min(agent_remaining, total_remaining)
         
         if can_afford:
-            if agent_name not in state.reserved_amounts:
-                state.reserved_amounts[agent_name] = 0.0
-            state.reserved_amounts[agent_name] += expected_cost
+            if agent_name not in self.reserved_amounts:
+                self.reserved_amounts[agent_name] = 0.0
+            self.reserved_amounts[agent_name] += expected_cost
             reason = "Budget reserved"
             logger.info(f"Reserved {expected_cost} for {agent_name}")
         else:
@@ -155,56 +154,42 @@ class StateManager:
                 reason = f"Total budget exceeded (remaining: {total_remaining})"
             logger.warning(f"Cannot reserve {expected_cost} for {agent_name}: {reason}")
         
-        new_ref = ray.put(state)
-        return can_afford, reason, new_ref
+        return can_afford, reason, self.get_budget_summary()
     
-    @staticmethod
-    def record_cost(ref: ray.ObjectRef, agent_name: str, expected: float, actual: float) -> ray.ObjectRef:
+    def record_cost(self, agent_name: str, expected: float, actual: float) -> Dict[str, Any]:
         """Record actual cost and release reservation"""
-        state = ray.get(ref)
-        
         # Release reservation
-        if agent_name in state.reserved_amounts:
-            state.reserved_amounts[agent_name] = max(0, state.reserved_amounts[agent_name] - expected)
+        if agent_name in self.reserved_amounts:
+            self.reserved_amounts[agent_name] = max(0, self.reserved_amounts[agent_name] - expected)
         
         # Record spending
-        if agent_name not in state.agent_spending:
-            state.agent_spending[agent_name] = 0.0
-        state.agent_spending[agent_name] += actual
-        state.total_spent += actual
+        if agent_name not in self.agent_spending:
+            self.agent_spending[agent_name] = 0.0
+        self.agent_spending[agent_name] += actual
+        self.total_spent += actual
         
         # Debug logging
         logger.info(f"Budget update for {agent_name}:")
-        logger.info(f"  - Previous spending: {state.agent_spending[agent_name] - actual:.2f}")
-        logger.info(f"  - New spending: {state.agent_spending[agent_name]:.2f}")
-        logger.info(f"  - Total spent: {state.total_spent:.2f}")
+        logger.info(f"  - Previous spending: {self.agent_spending[agent_name] - actual:.2f}")
+        logger.info(f"  - New spending: {self.agent_spending[agent_name]:.2f}")
+        logger.info(f"  - Total spent: {self.total_spent:.2f}")
         
-        new_ref = ray.put(state)
         logger.info(f"Recorded cost {actual} for {agent_name} (expected: {expected})")
-        return new_ref
+        return self.get_budget_summary()
     
-    @staticmethod
-    def release_reservation(ref: ray.ObjectRef, agent_name: str, amount: float) -> ray.ObjectRef:
+    def release_reservation(self, agent_name: str, amount: float) -> None:
         """Release a budget reservation if job fails"""
-        state = ray.get(ref)
-        
-        if agent_name in state.reserved_amounts:
-            state.reserved_amounts[agent_name] = max(0, state.reserved_amounts[agent_name] - amount)
+        if agent_name in self.reserved_amounts:
+            self.reserved_amounts[agent_name] = max(0, self.reserved_amounts[agent_name] - amount)
             logger.info(f"Released reservation of {amount} for {agent_name}")
-        
-        return ray.put(state)
     
-    @staticmethod
-    def get_job(ref: ray.ObjectRef, job_id: str) -> Optional[Job]:
+    def get_job(self, job_id: str) -> Optional[Job]:
         """Get a specific job"""
-        state = ray.get(ref)
-        return state.jobs.get(job_id)
+        return self.jobs.get(job_id)
     
-    @staticmethod
-    def get_job_results(ref: ray.ObjectRef, job_id: str) -> Dict[str, Any]:
+    def get_job_results(self, job_id: str) -> Dict[str, Any]:
         """Get formatted results for a job"""
-        state = ray.get(ref)
-        job = state.jobs.get(job_id)
+        job = self.jobs.get(job_id)
         
         if not job:
             return {"error": f"Job {job_id} not found"}
@@ -230,11 +215,9 @@ class StateManager:
             "total_duration": job.completed_at - job.created_at if job.completed_at else None
         }
     
-    @staticmethod
-    def get_job_summary(ref: ray.ObjectRef, job_id: str) -> Dict[str, Any]:
+    def get_job_summary(self, job_id: str) -> Dict[str, Any]:
         """Get lightweight job summary"""
-        state = ray.get(ref)
-        job = state.jobs.get(job_id)
+        job = self.jobs.get(job_id)
         
         if not job:
             return {"error": f"Job {job_id} not found"}
@@ -247,19 +230,16 @@ class StateManager:
             "is_complete": job.is_complete()
         }
     
-    @staticmethod
-    def get_budget_summary(ref: ray.ObjectRef) -> Dict[str, Any]:
+    def get_budget_summary(self) -> Dict[str, Any]:
         """Get budget summary"""
-        state = ray.get(ref)
-        
-        total_reserved = sum(state.reserved_amounts.values())
-        total_remaining = state.total_budget - state.total_spent - total_reserved
+        total_reserved = sum(self.reserved_amounts.values())
+        total_remaining = self.total_budget - self.total_spent - total_reserved
         
         agents = {}
-        for agent_name in set(list(state.agent_spending.keys()) + list(state.agent_limits.keys())):
-            spent = state.agent_spending.get(agent_name, 0.0)
-            reserved = state.reserved_amounts.get(agent_name, 0.0)
-            limit = state.agent_limits.get(agent_name, float('inf'))
+        for agent_name in set(list(self.agent_spending.keys()) + list(self.agent_limits.keys())):
+            spent = self.agent_spending.get(agent_name, 0.0)
+            reserved = self.reserved_amounts.get(agent_name, 0.0)
+            limit = self.agent_limits.get(agent_name, float('inf'))
             remaining = limit - spent - reserved
             
             agents[agent_name] = {
@@ -267,12 +247,12 @@ class StateManager:
                 'reserved': reserved,
                 'remaining': min(remaining, total_remaining),
                 'limit': limit,
-                'expected_price': state.agent_prices.get(agent_name, 0.0)
+                'expected_price': self.agent_prices.get(agent_name, 0.0)
             }
         
         return {
-            'total_budget': state.total_budget,
-            'total_spent': state.total_spent,
+            'total_budget': self.total_budget,
+            'total_spent': self.total_spent,
             'total_reserved': total_reserved,
             'total_remaining': total_remaining,
             'agents': agents

@@ -86,19 +86,6 @@ def create_success_response(
         "error": None
     }
     
-    # Add budget summary if available
-    if state_ref:
-        try:
-            # Import here to avoid circular dependency
-            from .state import StateManager
-            budget_summary = StateManager.get_budget_summary(state_ref)
-            response["budget_summary"] = {
-                "total_budget": budget_summary["total_budget"],
-                "total_spent": budget_summary["total_spent"],
-                "total_remaining": budget_summary["total_remaining"],
-                "agent_breakdown": budget_summary["agents"]
-            }
-        except Exception as e:
-            logger.warning(f"Failed to get budget summary: {str(e)}")
+    # Note: budget summary is now handled at the actor level, not passed through state_ref
     
     return response

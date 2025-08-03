@@ -8,7 +8,7 @@ import requests
 import time
 import json
 from typing import List, Dict, Any, Optional
-from .state import StateManager, Task
+from .state import Task
 from .masumi import MasumiClient
 from .storage import storage
 
@@ -78,36 +78,26 @@ async def _process_task_status(task, status_result, job_id, tracer=None):
 
 
 @ray.remote
-def poll_masumi_jobs(state_ref: ray.ObjectRef, job_id: str) -> ray.ObjectRef:
+def poll_masumi_jobs(actor, job_id: str) -> None:
     """
     Poll all pending agent tasks in a job until they complete or fail.
-    Updates the Ray state as tasks complete.
+    Updates the actor state as tasks complete.
     
     Args:
-        state_ref: Reference to AppState in Ray object store
+        actor: StateActor instance
         job_id: ID of the job to poll
-        
-    Returns:
-        Updated state reference with all tasks completed
     """
     # Ray remote tasks run the async code with asyncio.run
-    return asyncio.run(_poll_masumi_jobs_async(state_ref, job_id))
+    asyncio.run(_poll_masumi_jobs_async(actor, job_id))
 
 
-async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=None) -> ray.ObjectRef:
+async def _poll_masumi_jobs_async(actor, job_id: str, tracer=None) -> None:
     """Async implementation of job polling"""
-    # First log what's in the state
-    state = ray.get(state_ref)
-    logger.info(f"Polling function received state with jobs: {list(state.jobs.keys())}")
-    logger.info(f"Looking for job {job_id}")
-    
-    job = StateManager.get_job(state_ref, job_id)
+    # First verify job exists
+    job = await actor.get_job.remote(job_id)
     if not job:
         logger.error(f"Job {job_id} not found at start of polling")
-        # Log all jobs in state to debug
-        logger.error(f"Jobs in state: {list(state.jobs.keys())}")
-        logger.error(f"State ref ID: {state_ref.hex()}")
-        return state_ref
+        return
     logger.info(f"Starting background task polling for job {job_id}")
     logger.info(f"Total agent tasks to poll: {len(job.tasks)}")
     
@@ -127,7 +117,7 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
     
     while True:
         # Get job for checking completion
-        job = StateManager.get_job(state_ref, job_id)
+        job = await actor.get_job.remote(job_id)
         if not job:
             logger.error(f"Job {job_id} not found during polling")
             break
@@ -151,7 +141,7 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
                 }
                 for task in pending_tasks
             ]
-            state_ref = StateManager.update_tasks(state_ref, job_id, timeout_updates)
+            await actor.update_tasks.remote(job_id, timeout_updates)
             break
         
         # Collect updates to apply in batch
@@ -166,7 +156,7 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
                 {'task_id': task.id, 'status': 'running'}
                 for task in pending_to_running
             ]
-            state_ref = StateManager.update_tasks(state_ref, job_id, running_updates)
+            await actor.update_tasks.remote(job_id, running_updates)
         
         # Poll each task and collect results
         for task in pending_tasks:
@@ -188,12 +178,12 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
         
         # Apply all collected updates in a single batch operation
         if task_updates:
-            state_ref = StateManager.update_tasks(state_ref, job_id, task_updates)
+            await actor.update_tasks.remote(job_id, task_updates)
             logger.info(f"Applied {len(task_updates)} task updates in batch")
         
         # Show status update periodically
         if tracer and len(pending_tasks) > 0:
-            job_summary = StateManager.get_job_summary(state_ref, job_id)
+            job_summary = await actor.get_job_summary.remote(job_id)
             completed = job_summary['completed_tasks']
             failed = job_summary['failed_tasks']
             total = job_summary['total_tasks']
@@ -204,11 +194,11 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
         await asyncio.sleep(poll_interval)
         poll_interval = min(poll_interval * backoff_factor, max_interval)
     
-    # Return final state reference
-    final_job = StateManager.get_job(state_ref, job_id)
+    # Get final job status
+    final_job = await actor.get_job.remote(job_id)
     if not final_job:
         logger.error(f"Job {job_id} not found at end of polling")
-        return state_ref
+        return
         
     completed_tasks = [t for t in final_job.tasks if t.status == "completed"]
     failed_tasks = [t for t in final_job.tasks if t.status == "failed"]
@@ -243,6 +233,6 @@ async def _poll_masumi_jobs_async(state_ref: ray.ObjectRef, job_id: str, tracer=
         else:
             await tracer.markdown(f"📋 Results: {len(completed_tasks)} successful")
     
-    return state_ref
+    return
 
 

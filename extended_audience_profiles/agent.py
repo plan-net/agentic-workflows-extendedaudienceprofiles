@@ -8,8 +8,8 @@ import time
 import ray
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
-from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_state_ref, get_current_state_ref, get_or_create_state_ref
-from .state import StateManager, Task
+from .tools import list_available_agents, get_agent_input_schema, execute_agent_job
+from .state import Task, init_state_actor, get_state_actor
 from .background import _poll_masumi_jobs_async
 from .storage import storage
 from .masumi import MasumiClient
@@ -85,17 +85,17 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
     try:
         logger.info(f"Starting audience profile generation for: {audience_description}")
         
-        # Initialize state reference
-        state_ref = get_or_create_state_ref()
-        set_state_ref(state_ref)
+        # Initialize state actor
+        from .masumi import MasumiClient
+        client = MasumiClient()
+        actor = init_state_actor(client.budget_config, client.agents_config)
         
         # Create a new job in the state
-        job_id, state_ref = StateManager.create_job(state_ref, audience_description)
-        set_state_ref(state_ref)  # Update global state ref
+        job_id = await actor.create_job.remote(audience_description)
         logger.info(f"Created job {job_id}")
         
         # Verify job was created
-        job = StateManager.get_job(state_ref, job_id)
+        job = await actor.get_job.remote(job_id)
         if not job:
             raise Exception(f"Failed to create job - job {job_id} not found in state")
         logger.info(f"Job {job_id} verified in state")
@@ -118,7 +118,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         logger.info("Phase 1: Running orchestrator agent to submit jobs...")
         if tracer:
             # Show initial budget info
-            budget_summary = StateManager.get_budget_summary(state_ref)
+            budget_summary = await actor.get_budget_summary.remote()
             await tracer.markdown(f"💰 **Budget Information**")
             await tracer.markdown(f"- Total Budget: {budget_summary['total_budget']:.1f} USDM")
             await tracer.markdown(f"- Already Spent: {budget_summary['total_spent']:.1f} USDM")
@@ -161,8 +161,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     id=result['job_id'],  # This is the Masumi job ID
                     agent_name=result.get('agent_name', 'Unknown')
                 )
-                state_ref = StateManager.add_task(state_ref, job_id, task)
-                set_state_ref(state_ref)  # Update global state ref
+                await actor.add_task.remote(job_id, task)
                 submitted_tasks.append({
                     "masumi_job_id": task.id,
                     "agent": task.agent_name
@@ -204,10 +203,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             for task in submitted_tasks:
                 await tracer.markdown(f"  • {task['agent']} [{task['masumi_job_id'][:8]}...]")
         
-        # Get the latest state ref from tools (where execute_agent_job updates it)
-        state_ref = get_current_state_ref()
-        if not state_ref:
-            raise Exception("State reference lost after tool calls")
+        # No need to get state ref anymore - actor maintains state
         
         # Phase 2: Poll agent tasks in background
         logger.info("Phase 2: Starting background polling for agent task results...")
@@ -216,10 +212,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("⏳ Polling for results (5-20 minutes)...")
         
         # Run the polling directly in this async context so we can use the tracer
-        state_ref = await _poll_masumi_jobs_async(state_ref, job_id, tracer)
+        await _poll_masumi_jobs_async(actor, job_id, tracer)
         
         # Get the completed job execution results
-        results = StateManager.get_job_results(state_ref, job_id)
+        results = await actor.get_job_results.remote(job_id)
         
         # Check for error in results
         if 'error' in results:
@@ -237,15 +233,16 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             await tracer.markdown("\n🔬 **Phase 3: Refinement Analysis**")
             
             # Show current budget status
-            budget_summary = StateManager.get_budget_summary(state_ref)
+            budget_summary = await actor.get_budget_summary.remote()
             await tracer.markdown(f"💰 **Remaining Budget**: {budget_summary['total_remaining']:.1f} USDM")
             await tracer.markdown("🤔 Analyzing first round results...")
         
         # Prepare results for refinement agent
+        budget_summary = await actor.get_budget_summary.remote()
         refinement_prompt = format_results_for_refinement(
             results['results'],
             audience_description,
-            StateManager.get_budget_summary(state_ref)['total_remaining']
+            budget_summary['total_remaining']
         )
         
         refinement_result = await Runner.run(
@@ -272,8 +269,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     id=result['job_id'],
                     agent_name=result.get('agent_name', 'Unknown')
                 )
-                state_ref = StateManager.add_task(state_ref, job_id, task)
-                set_state_ref(state_ref)  # Update global state ref
+                await actor.add_task.remote(job_id, task)
                 second_round_tasks.append({
                     "masumi_job_id": task.id,
                     "agent": task.agent_name
@@ -297,10 +293,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         if tracer:
             await tracer.markdown(f"\n✅ **Submitted {len(second_round_tasks)} deep-dive tasks**")
         
-        # Get the latest state ref from tools (where execute_agent_job updates it)
-        state_ref = get_current_state_ref()
-        if not state_ref:
-            raise Exception("State reference lost after refinement tool calls")
+        # No need to get state ref anymore - actor maintains state
         
         # Phase 4: Poll for second round results
         logger.info("Phase 4: Second round results phase...")
@@ -312,18 +305,14 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                 await tracer.markdown("⏳ Polling for deep-dive results...")
             
             # Verify state before second polling
-            state = ray.get(state_ref)
-            logger.info(f"Before second polling - Jobs in state: {list(state.jobs.keys())}")
-            if job_id in state.jobs:
-                logger.info(f"Job {job_id} has {len(state.jobs[job_id].tasks)} tasks")
-            else:
-                logger.error(f"Job {job_id} NOT FOUND in state before second polling!")
+            job_summary = await actor.get_job_summary.remote(job_id)
+            logger.info(f"Before second polling - Job {job_id}: {job_summary['total_tasks']} tasks")
             
             # Poll again for second round
-            state_ref = await _poll_masumi_jobs_async(state_ref, job_id, tracer)
+            await _poll_masumi_jobs_async(actor, job_id, tracer)
             
             # Get all results (both rounds)
-            results = StateManager.get_job_results(state_ref, job_id)
+            results = await actor.get_job_results.remote(job_id)
             
             # Check for error in results
             if 'error' in results:
@@ -382,14 +371,8 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             if token_info['truncation_applied']:
                 await tracer.markdown("- ⚠️ Some content was truncated to fit context window")
             
-            # Get the most current state before showing final budget
-            state_ref = get_current_state_ref()
-            if not state_ref:
-                logger.warning("No state ref available for final budget summary")
-                state_ref = get_or_create_state_ref()
-            
             # Show final budget summary
-            final_budget = StateManager.get_budget_summary(state_ref)
+            final_budget = await actor.get_budget_summary.remote()
             await tracer.markdown("\n💰 **Final Budget Summary**")
             await tracer.markdown(f"- Initial Budget: {final_budget['total_budget']:.1f} USDM")
             await tracer.markdown(f"- Total Spent: {final_budget['total_spent']:.1f} USDM")
@@ -432,7 +415,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             results=results,
             submitted_tasks=submitted_tasks,
             second_round_tasks=second_round_tasks,
-            state_ref=state_ref
+            state_ref=None  # No longer needed
         )
         
     except Exception as e:

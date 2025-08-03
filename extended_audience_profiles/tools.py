@@ -4,38 +4,13 @@ Tools for OpenAI Agents - includes Masumi Network integration tools
 from typing import Dict, Any, List, Optional
 from agents import function_tool
 from .masumi import MasumiClient
-from .state import StateManager
+from .state import get_state_actor
 import ray
 import logging
 
 logger = logging.getLogger(__name__)
 
-# Global state reference set by the agent
-_state_ref = None
-
-def set_state_ref(state_ref: ray.ObjectRef) -> None:
-    """Set the global state reference for tools to use."""
-    global _state_ref
-    _state_ref = state_ref
-    logger.info("State reference set for tools")
-
-def get_current_state_ref() -> ray.ObjectRef:
-    """Get the current global state reference."""
-    global _state_ref
-    return _state_ref
-
-def get_or_create_state_ref() -> ray.ObjectRef:
-    """Get or create the global state reference."""
-    global _state_ref
-    if _state_ref is None:
-        # Initialize state from config
-        client = MasumiClient()  # Load config
-        _state_ref = StateManager.initialize(
-            client.budget_config,
-            client.agents_config
-        )
-        logger.info("Initialized global application state in tools.py")
-    return _state_ref
+# No longer need state reference globals - using actor pattern
 
 
 
@@ -52,13 +27,18 @@ async def list_available_agents() -> Dict[str, Any]:
         client = MasumiClient()
         available_agents = client.get_available_agents()
         
-        # Get budget summary directly from StateManager
-        budget_summary = StateManager.get_budget_summary(_state_ref) if _state_ref else {
-            'total_budget': float('inf'),
-            'total_spent': 0.0,
-            'total_remaining': float('inf'),
-            'agents': {}
-        }
+        # Get budget summary from actor
+        try:
+            actor = get_state_actor()
+            budget_summary = await actor.get_budget_summary.remote()
+        except RuntimeError:
+            # Actor not initialized yet
+            budget_summary = {
+                'total_budget': float('inf'),
+                'total_spent': 0.0,
+                'total_remaining': float('inf'),
+                'agents': {}
+            }
         
         # Format agent information for the AI to understand
         agents_info = []
@@ -148,8 +128,6 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
     Returns:
         Dict containing job_id and submission status (not the result)
     """
-    global _state_ref
-    
     try:
         client = MasumiClient()
         
@@ -165,14 +143,12 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
         
         # Check and reserve budget BEFORE starting the job
         expected_cost = agent_config.get('price', 0.0)
-        if _state_ref:
-            can_afford, reason, new_state_ref = StateManager.reserve_budget(
-                _state_ref, agent_name, expected_cost
-            )
+        try:
+            actor = get_state_actor()
+            can_afford, reason, budget_summary = await actor.reserve_budget.remote(agent_name, expected_cost)
             
             if not can_afford:
                 # Get current budget state for error response
-                budget_summary = StateManager.get_budget_summary(_state_ref)
                 agent_info = budget_summary['agents'].get(agent_name, {})
                 
                 return {
@@ -187,9 +163,9 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                         'remaining': agent_info.get('remaining', 0)
                     }
                 }
-            
-            # Update global state ref
-            _state_ref = new_state_ref
+        except RuntimeError:
+            # Actor not initialized, proceed without budget check
+            logger.warning("StateActor not initialized, skipping budget check")
         
         # Step 1: Start the job
         logger.info(f"Starting job with agent: {agent_name}")
@@ -207,8 +183,11 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             
             if not purchase_result.get('success'):
                 # Release the budget reservation
-                if _state_ref:
-                    _state_ref = StateManager.release_reservation(_state_ref, agent_name, expected_cost)
+                try:
+                    actor = get_state_actor()
+                    await actor.release_reservation.remote(agent_name, expected_cost)
+                except RuntimeError:
+                    pass
                 
                 return {
                     'success': False,
@@ -226,18 +205,27 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                 logger.warning(f"Actual cost is 0, using expected cost {expected_cost} for {agent_name}")
                 actual_cost = expected_cost
             
-            if _state_ref and actual_cost > 0:
-                logger.info(f"Recording cost: {actual_cost} USDM for {agent_name}")
-                _state_ref = StateManager.record_cost(_state_ref, agent_name, expected_cost, actual_cost)
+            if actual_cost > 0:
+                try:
+                    actor = get_state_actor()
+                    logger.info(f"Recording cost: {actual_cost} USDM for {agent_name}")
+                    await actor.record_cost.remote(agent_name, expected_cost, actual_cost)
+                except RuntimeError:
+                    logger.warning(f"StateActor not initialized, cannot record cost of {actual_cost}")
             else:
-                logger.warning(f"Not recording cost - actual_cost={actual_cost}, state_ref={_state_ref is not None}")
+                logger.warning(f"Not recording cost - actual_cost={actual_cost}")
             
             # Return immediately without waiting
             logger.info(f"Job {job_id} submitted successfully, payment completed")
             
             # Get updated budget info after recording actual cost
-            budget_summary = StateManager.get_budget_summary(_state_ref) if _state_ref else None
-            agent_info = budget_summary['agents'].get(agent_name, {}) if budget_summary else {}
+            try:
+                actor = get_state_actor()
+                budget_summary = await actor.get_budget_summary.remote()
+                agent_info = budget_summary['agents'].get(agent_name, {})
+            except RuntimeError:
+                budget_summary = None
+                agent_info = {}
             
             return {
                 'success': True,
@@ -255,8 +243,11 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             
         except Exception as e:
             # Release budget reservation on any error
-            if _state_ref:
-                _state_ref = StateManager.release_reservation(_state_ref, agent_name, expected_cost)
+            try:
+                actor = get_state_actor()
+                await actor.release_reservation.remote(agent_name, expected_cost)
+            except RuntimeError:
+                pass
             raise
         
     except ValueError as ve:
