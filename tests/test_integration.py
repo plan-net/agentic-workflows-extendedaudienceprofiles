@@ -4,7 +4,7 @@ Integration tests for the fan-out/fan-in flow without Ray remote tasks
 import pytest
 import asyncio
 from unittest.mock import Mock, AsyncMock, patch
-from extended_audience_profiles.state import StateManager, Job
+from extended_audience_profiles.state import Job, init_state_actor, get_state_actor
 from extended_audience_profiles.masumi import MasumiClient
 
 

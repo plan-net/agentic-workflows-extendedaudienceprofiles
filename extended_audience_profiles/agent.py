@@ -2,10 +2,8 @@
 Business logic for Extended Audience Profiles using OpenAI Agents and Masumi Network
 """
 import asyncio
-import json
 import logging
 import time
-import ray
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
 from .tools import list_available_agents, get_agent_input_schema, execute_agent_job
@@ -50,22 +48,6 @@ consolidator_agent = Agent(
     model="gpt-4.1",
     tools=[]  # Consolidator doesn't need tools - just processes provided data
 )
-
-
-
-# Helper functions moved to formatting.py and errors.py
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 async def generate_audience_profile(audience_description: str, tracer=None) -> Dict[str, Any]:

@@ -173,6 +173,6 @@ def find_agent_name_from_previous_calls(items: List[Any], current_index: int) ->
             try:
                 args = json.loads(item.function.arguments)
                 return args.get('agent_name')
-            except:
+            except (json.JSONDecodeError, AttributeError):
                 pass
     return None

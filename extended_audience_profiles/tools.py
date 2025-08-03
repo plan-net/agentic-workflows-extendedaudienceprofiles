@@ -5,7 +5,6 @@ from typing import Dict, Any, List, Optional
 from agents import function_tool
 from .masumi import MasumiClient
 from .state import get_state_actor
-import ray
 import logging
 
 logger = logging.getLogger(__name__)

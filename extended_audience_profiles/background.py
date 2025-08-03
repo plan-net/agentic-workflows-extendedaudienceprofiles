@@ -4,9 +4,7 @@ Background Ray tasks for polling Masumi job status
 import ray
 import asyncio
 import logging
-import requests
 import time
-import json
 from typing import List, Dict, Any, Optional
 from .state import Task
 from .masumi import MasumiClient
