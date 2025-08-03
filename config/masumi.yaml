@@ -10,7 +10,7 @@ agents:
 
   - name: "audience-insights-gwi"
     endpoint: "http://138.68.88.241:8000/Audience%20Insights%20GWI"  
-    description: "Global Web Index (GWI) consumer research platform providing deep audience insights from survey data of millions of consumers worldwide"
+    description: "Global Web Index (GWI) consumer research platform providing deep audience insights from survey data. IMPORTANT: Use short, concise prompts for best results - complex questions yield fewer data points. Each response includes a Chat ID for follow-up queries."
     price: 3.0  # Expected cost per job in USDM
     max_total_spend: 9.0  # Optional: can call this agent until 9.0 USDM is spent
     enabled: true
@@ -21,11 +21,18 @@ agents:
       - "Consumer attitudes, brand affinity, purchase intent, and lifestyle data"
       - "Media consumption habits, device usage, and online behavior patterns"
       - "Industry-specific insights for retail, finance, travel, technology, and more"
-    best_for: "Deep demographic analysis, consumer behavior patterns, brand perception, market-specific insights"
+      - "Chat ID feature: Each response includes a Chat ID for follow-up questions to drill deeper"
+    best_for: "Concise demographic descriptions, simple audience segments, follow-up queries using Chat IDs from previous responses. Works best with short prompts."
     example_prompts:
-      - "What are the shopping habits and brand preferences of millennial women (ages 25-35) in the United States with household income above $75,000?"
-      - "Analyze the sustainability attitudes and eco-friendly purchasing behaviors of Gen Z consumers (ages 18-24) across Western Europe, particularly in Germany, France, and the UK"
-      - "What are the financial services usage patterns and investment attitudes of high-income professionals (age 35-50) in Asian markets, specifically Singapore, Hong Kong, and Japan?"
+      - "male mid-level managers who are thinking about upgrading their car"
+      - "millennial women in entry-level positions"
+      - "Gen Z college students interested in sustainable fashion"
+      - "Follow-up: Use Chat ID 3b60363c-4f37-4d27-983a-17dd487f77a3 to explore their media habits"
+    limitations:
+      - "Shorter prompts yield more data points (150+ for concise descriptions vs 5-10 for complex questions)"
+      - "Avoid long, multi-part questions - break them into separate queries instead"
+      - "Best results from simple demographic/psychographic descriptions rather than complex analytical questions"
+      - "Use the Chat ID from responses for targeted follow-up questions in refinement phase"
     
   - name: "advanced-web-research"
     endpoint: "http://138.68.88.241:8000/Advanced%20Web%20Research"

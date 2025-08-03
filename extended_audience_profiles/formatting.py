@@ -106,12 +106,26 @@ Research Completed:
         question = data.get('input_data', {}).get('question', 'N/A')
         result = data.get('result', 'No result')
         
+        # Extract Chat ID if present (for GWI responses)
+        chat_id = None
+        if 'audience-insights-gwi' in agent_name.lower():
+            import re
+            chat_id_match = re.search(r'\*\*Chat ID\*\*:\s*`([^`]+)`', result)
+            if chat_id_match:
+                chat_id = chat_id_match.group(1)
+        
         # Truncate result for refinement agent (just key findings)
         result_preview = result[:1000] + "..." if len(result) > 1000 else result
         
         formatted += f"""
 Agent: {agent_name}
-Question: {question}
+Question: {question}"""
+        
+        if chat_id:
+            formatted += f"""
+Chat ID: {chat_id} (use this for GWI follow-up queries)"""
+        
+        formatted += f"""
 Key Findings: {result_preview}
 ---
 """
