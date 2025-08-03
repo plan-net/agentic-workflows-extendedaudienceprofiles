@@ -8,7 +8,7 @@ CRITICAL REQUIREMENTS:
 - DO NOT add any information not present in the research results
 - If data is missing for a section, explicitly state "No data available from research"
 
-YOUR MISSION: Transform dry research data into an engaging, insightful narrative that brings your audience to life while maintaining rigorous accuracy.
+YOUR MISSION: Transform dry research data into an engaging, insightful narrative that brings your audience to life while maintaining rigorous accuracy. Write naturally - let insights flow into each other, don't mechanically follow a template.
 
 YOUR TASK - Think step-by-step:
 
@@ -26,13 +26,13 @@ Step 1: Carefully read ALL research results and extract sources
 Step 2: Design Your Custom Profile Structure
 Let the research guide your structure - create an outline that serves THIS specific audience:
 - Start with the original audience description/question - what are they really asking?
-- Identify ALL the valuable insights, not just the headlines
-- Group findings into natural themes that deserve deep exploration
+- Identify the MOST compelling and revealing insights that define this audience
+- Group findings into natural themes that tell a coherent story
 - Plan a progressive journey from essential insights to nuanced understanding
-- Consider: What complete story does this data tell?
-- Design sections that fully explore what makes this audience unique
-- Remember: This is an EXTENDED profile - every significant theme deserves thorough treatment
-- Think depth: If a section could be a standalone article, you're on the right track
+- Consider: What's the through-line that connects all these findings?
+- Design sections that explore what truly makes this audience unique
+- Remember: This is an EXTENDED profile - go deep on what matters, not broad on everything
+- Think quality: Better to thoroughly explore 5 key themes than superficially cover 15
 
 Step 3: Choose Your Presentation Toolkit
 Select formats that make your insights shine:
@@ -66,18 +66,19 @@ Step 4: Write a Comprehensive, Multi-Format Extended Profile
 Transform research into an authoritative resource:
 
 **Opening Strategy** (Aim for 1000+ words):
-- Start with your most powerful insight - make it impossible to stop reading
+- Start with an insight that makes it impossible to stop reading
 - Provide a comprehensive executive summary that stands alone
 - Map out the journey ahead - what complete picture will emerge?
-- Include an "At a Glance" section with 10-15 key statistics
+- Include key statistics that tell a story, not just a list
 
 **Depth Techniques for Extended Analysis**:
 - Don't just state findings - explore their origins, implications, and applications
 - When data surprises you, dedicate space to understanding why
 - Create detailed subsections within each major theme
 - Use the "iceberg principle": Show the tip, then dive deep below the surface
-- Include confidence levels and data ranges, not just averages
-- Address contradictions and edge cases explicitly
+- Weave together insights from ALL agent types - GWI data, web research, AND crowd opinions
+- When you have survey/crowd data, use it to validate or challenge other findings
+- Address contradictions as opportunities for deeper understanding, not problems to smooth over
 
 **Narrative Expansion**:
 - Develop full scenes and scenarios, not just bullet points
@@ -94,10 +95,11 @@ Transform research into an authoritative resource:
 
 **Maintaining Engagement Across 15,000+ Words**:
 - Create natural "chapters" with their own narrative arcs
-- Use cliffhangers between sections
-- Vary your presentation formats throughout
-- Include "What This Means for You" subsections
+- Use cliffhangers between sections to pull readers forward
+- Constantly vary your presentation - if you've used tables twice, try a journey map
+- Let the content dictate the format - don't force statistics into prose if a visual works better
 - Build toward revelations, not just conclusions
+- Remember: Monotony kills engagement - surprise your reader with format shifts
 
 **Visual Breathing Room**:
 - Use formatted elements liberally - this is a long read
@@ -111,9 +113,10 @@ Create a comprehensive analysis of 15,000-20,000 words. You have approximately 3
 **Depth Principles**:
 - Start with the most important insights, then progressively reveal deeper layers
 - For each major theme, explore implications, contradictions, and edge cases
-- When you introduce a statistic, unpack what it means
-- When you identify a pattern, trace its full implications
-- Think: "What would an expert want to know about this audience?"
+- Statistics are starting points for insight, not endpoints - always ask "so what?"
+- Synthesize findings from multiple sources - especially minority viewpoints and contradictory data
+- Every paragraph should advance understanding, not just add information
+- Think: "What story emerges when all these pieces come together?"
 
 **Consider techniques like**:
 - Extended persona narratives (500-1000 words) that bring data to life
@@ -229,8 +232,6 @@ LinkedIn dominates with 2.5 hours/week average [Professional Content Consumption
 
 **Insight Callout Box**:
 ```markdown
-> 🔍 **The Hidden Influence**
-> 
 > While 92% claim to make independent decisions, our research reveals that 
 > 76% won't proceed without at least one peer endorsement. The most influential 
 > moment? The casual "Oh, we use that too" during industry happy hours.
@@ -251,10 +252,11 @@ SOURCE EXTRACTION EXAMPLES:
 Remember: Your credibility depends on accurate source attribution, but your value comes from making that data sing. Every insight must be traceable to the original research, but every sentence should make the reader want to read the next one.
 
 FINAL CHECK: You're creating an EXTENDED audience profile. Ask yourself:
-- Have I explored every significant finding in depth?
-- Does each section provide comprehensive understanding, not just overview?
-- Have I used at least 60% of my output capacity (~20,000 tokens)?
-- Would an expert say "this is thorough" or "this needs more depth"?
-- Have I transformed ALL the valuable research into actionable insights?
+- Have I told a compelling story with the data, not just catalogued it?
+- Does each section advance understanding or just add information?
+- Have I synthesized insights from ALL source types (GWI, web research, crowd opinions)?
+- Would a reader say "this is insightful" or "this is just a data dump"?
+- Have I maintained narrative quality throughout, or did I resort to listing statistics?
+- Is this 15-20k words of genuine insight, or padded content?
 
-This is your opportunity to create the definitive guide to this audience. Use it fully.
+This is your opportunity to create something truly valuable - a profile that transforms data into understanding. Quality over quantity, always.
