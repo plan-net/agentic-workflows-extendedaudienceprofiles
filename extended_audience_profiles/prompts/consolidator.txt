@@ -20,6 +20,9 @@ Step 1: Carefully read ALL research results and extract sources
   * For GWI results: Extract dataset info from "Data Sources" section
   * For metadata sections: Dataset names, time periods, markets
 - Create a master list of all unique sources before writing
+- CRITICAL: Advanced-web-research ALWAYS provides URLs - these MUST be preserved
+- Never cite a web source without its URL if one was provided
+- If you see a URL in the research, it MUST appear in your citation
 - Identify key themes, patterns, and data points
 - Flag any contradictions between sources
 
@@ -130,21 +133,35 @@ Remember: You have significant output capacity. A rushed or surface-level analys
 Step 5: Create Original Sources Table
 Before the appendix, add an "## Original Sources" section with a comprehensive table of all sources:
 
-| Source | Type | Details | Via |
-|--------|------|---------|-----|
-| [Original source name] | [Research report/Dataset/Study/Article] | [URL, time period, markets, or other metadata] | [agent-name] |
+| Source | Type | URL/Details | Via |
+|--------|------|-------------|-----|
+| [Original source name] | [Research report/Dataset/Study/Article] | [URL required for web sources] | [agent-name] |
 
 Include:
-- Research reports with full names and URLs
-- Datasets with time periods and geographic coverage
-- Studies with publication years
-- Any other cited materials
+- Web sources: MUST include the full URL (advanced-web-research always provides these)
+- GWI sources: Dataset name, time period, and geographic coverage
+- Ask-the-crowd: Survey/opinion details and demographics
+- NEVER list a web source without its URL - if missing, find it in the original research
+
+Example entries:
+| Nielsen Study 2024 | Research Report | https://nielsen.com/reports/2024-study.pdf | advanced-web-research |
+| GWI Core Dataset | Consumer Survey | Q2 2024, USA/UK/Germany, 50k respondents | audience-insights-gwi |
+| EU Consumer Opinions | Crowd Survey | Survey mode, ages 25-45, mixed gender | ask-the-crowd |
+
+Step 5.5: Validate URL Preservation
+Before finalizing, perform these checks:
+- Review EVERY citation from advanced-web-research
+- Confirm each has its original URL preserved in markdown link format
+- Check the Original Sources table - all web sources MUST have URLs
+- If any web source lacks a URL, you've made an error - go back to the research and find it
+- Remember: GWI and ask-the-crowd don't have URLs, but ALL web sources do
 
 Step 6: Polish Your Output Structure
 - Use clear markdown headings (##, ###) with descriptive titles
 - Ensure smooth transitions between sections
 - Original Sources table comes before the appendix
 - Check that every insight is properly cited
+- Verify all web source citations include their URLs
 
 Step 7: Create Research Appendix
 After your main profile, add an "Appendix: Research Documents" section with a table containing:
@@ -240,14 +257,25 @@ LinkedIn dominates with 2.5 hours/week average [Professional Content Consumption
 ```
 
 ENHANCED CITATION FORMAT EXAMPLES:
-- From research reports: "75% of furniture buyers plan to purchase a mattress within their first year [Provoke Insights, 2024][via: advanced-web-research]"
+- From research reports: "75% of furniture buyers plan to purchase a mattress within their first year [Provoke Insights, 2024](https://provokeinsights.com/report.pdf)[via: advanced-web-research]"
 - From datasets: "Millennials show 73% preference for sustainable brands [GWI Core Dataset, Q2 2024][via: audience-insights-gwi]"
-- From studies: "Remote work preferences increased by 45% [HFA Customer Journey Study, 2024][via: advanced-web-research]"
+- From studies: "Remote work preferences increased by 45% [HFA Customer Journey Study, 2024](https://hfa.com/journey-study)[via: advanced-web-research]"
+- Note: Web sources (via advanced-web-research) MUST include URLs in citations
 
 SOURCE EXTRACTION EXAMPLES:
 - If you see: "([Provoke Insights](https://provokeinsights.com/study.pdf))" → Extract as "Provoke Insights" with URL
 - If you see: "Data Sources: GWI Core, Q2 2024-Q1 2025, Markets: USA, UK" → Extract as "GWI Core Dataset" with details
 - If you see: "According to Urban Natural's 2024 trends report" → Extract as "Urban Natural Trends Report, 2024"
+
+URL PRESERVATION RULES:
+- If research shows: "[Nielsen Study](https://nielsen.com/report.pdf)"
+  Your citation MUST be: "[Nielsen Study](https://nielsen.com/report.pdf)[via: advanced-web-research]"
+  NOT just: "[Nielsen Study][via: advanced-web-research]" ❌
+- If research shows: "According to [Forbes](https://forbes.com/article123)"
+  Your citation MUST be: "According to [Forbes](https://forbes.com/article123)[via: advanced-web-research]"
+  NOT just: "According to Forbes[via: advanced-web-research]" ❌
+- Always check: Did the original have a URL? Then your citation needs it too.
+- Web sources without URLs are incomplete citations - this is an error
 
 Remember: Your credibility depends on accurate source attribution, but your value comes from making that data sing. Every insight must be traceable to the original research, but every sentence should make the reader want to read the next one.
 

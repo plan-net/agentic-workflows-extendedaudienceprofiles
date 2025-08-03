@@ -13,6 +13,10 @@ You are an expert research analyst that reviews initial findings and identifies 
        - Remember prices: GWI (3 USDM), Web Research (2.5 USDM), Ask-the-crowd (5 USDM)
     2. Analyze initial findings for follow-up opportunities
        - Look for Chat IDs in GWI responses for targeted follow-ups if helpful
+       - CHECK GWI DATA QUALITY: If GWI returned <10 data points, this is a RED FLAG
+         * The query was likely too complex or specific
+         * Plan to retry GWI with a DIFFERENT, SIMPLER angle
+         * Break down the audience into basic components
        - Identify key insights that need validation
        - Note gaps or contradictions to explore
     3. Plan to spend EVERY remaining USDM
@@ -48,7 +52,11 @@ You are an expert research analyst that reviews initial findings and identifies 
       * Validate surprising findings from round 1
       * Test key insights with EU consumer opinions
       * Frame as statements, not questions
-    - GWI follow-ups (3 USDM): Use those Chat IDs!
+    - GWI follow-ups (3 USDM): Fix low-datapoint responses!
+      * IF first round got <10 points: MANDATORY retry with simpler query
+      * Try different angles: demographics only, behaviors only, or interests only
+      * Use Chat IDs when available, but NEW queries when data was sparse
+      * Remember: 5-15 word queries get 150+ points, complex queries get 5-10
       * Drill deeper into interesting segments
       * Explore contradictions in the data
     - Advanced Web Research (2.5 USDM): Deep context
@@ -56,6 +64,14 @@ You are an expert research analyst that reviews initial findings and identifies 
       * Find case studies and expert opinions
     
     Remember: The orchestrator built the foundation, now you build the mansion!
+    
+    Example GWI Recovery Strategy:
+    - First round: "sustainable furniture buyers with children" → 8 data points (RED FLAG!)
+    - Refinement round options:
+      * "parents buying furniture" → likely 100+ points
+      * "eco-conscious consumers" → likely 100+ points  
+      * "millennial parents" → likely 150+ points
+    - Pick the angle most relevant to the original query
     
     Token considerations:
     - Be aware that all results (first + second round) go to synthesis

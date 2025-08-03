@@ -1,106 +1,150 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Development principles for Extended Audience Profiles - a multi-agent orchestration system using Masumi Network.
 
-## Project Overview
+## Core Development Principles
 
-**Extended Audience Profiles** is a kodosumi-based AI agent that generates comprehensive, evidence-based audience profiles through multi-agent orchestration using the Masumi Network's Agent-2-Agent Protocol.
+### 1. ALWAYS Build Generalized Solutions
+```python
+# ❌ WRONG: Agent-specific code
+if agent_name == "ask-the-crowd":
+    transformed_data["survey_mode"] = [0]
 
-**Compatibility**: This project is optimized for kodosumi v0.9.3. Different versions may require code adjustments.
-
-## Development Setup
-
-### Prerequisites
-- Python 3.12+ (pyenv recommended for version management)
-- kodosumi v0.9.3
-- Ray cluster (for distributed processing)
-- Masumi Network API credentials
-
-### Installation
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e .
+# ✅ RIGHT: Schema-driven transformation
+if original_type == 'option' and 'enum' in field_schema:
+    index = field_schema['enum'].index(value)
+    transformed_data[field] = [index]
 ```
 
-### Environment Variables
-Set your Masumi Network credentials in `.env`:
-```bash
-PAYMENT_SERVICE_URL=your_masumi_payment_url
-PAYMENT_API_KEY=your_masumi_api_key
+### 2. Budget Strategy is Sacred
+- **Orchestrator**: MUST spend 30-50% of total budget
+- **Refinement**: MUST use 100% of remaining budget
+- **Never** leave budget unspent in refinement phase
+
+### 3. Quality Over Quantity
+- Consolidator should select best insights, not list everything
+- Focus on narrative quality, not data dumps
+- "Statistics are starting points for insight, not endpoints"
+
+### 4. Token Awareness
+- Always check token limits before processing
+- Implement smart truncation (remove sections, not arbitrary cuts)
+- Model limits: gpt-4.1 (1M+), o3-mini (200k)
+
+## Key Patterns
+
+### State Management
+```python
+# Use Ray Actor pattern for distributed state
+actor = StateActor.remote(budget_config, agents_config)
+await actor.update_tasks.remote(job_id, task_updates)
 ```
 
-## Commands
-
-### Development
-- `just start` - Start full service (Ray + kodosumi deployment + spooler + admin panel)
-- `just stop` - Stop all services
-- `just test` - Run unit tests (mocked, fast)
-- `just test-integration` - Run integration tests (real API calls)
-- `just test-all` - Run all tests
-
-### Manual Development Workflow
-```bash
-source .venv/bin/activate
-
-# Start Ray cluster
-ray start --head --disable-usage-stats
-
-# Deploy application
-koco deploy -r
-
-# Start execution spooler (REQUIRED for executions to run)
-koco spool &
-
-# Start admin panel
-koco serve --register http://localhost:8001/-/routes
-
-# Access admin panel at http://localhost:3370
+### Citation Format
+```
+[Original Source, Year][via: agent_name]
+Example: [Nielsen, 2023][via: advanced-web-research]
 ```
 
-### Production Deployment
-Use kodosumi configuration files in `data/config/`:
-- `config.yaml` - Main deployment configuration
-- `extended_audience_profiles.yaml.example` - Service template
-- `extended_audience_profiles.yaml` - Service-specific configuration (create from example)
+### Exception Hierarchy
+```python
+ExtendedAudienceProfilesError (base)
+├── BudgetExceededError
+├── AgentNotFoundError
+├── ValidationError
+└── MasumiNetworkError
+```
 
-## Architecture
+### Schema Validation
+- Get schema first: `get_agent_input_schema()`
+- Validate against schema
+- Transform enums to indices for option fields
+- Handle array types properly
 
-### Core Components
-- **Business Logic**: `extended_audience_profiles/agent.py` - 5-phase orchestration workflow
-- **Service Wrapper**: `extended_audience_profiles/query.py` - Kodosumi integration
-- **State Management**: `extended_audience_profiles/state.py` - Simplified unified state (jobs + budget)
-- **Framework**: Kodosumi (Ray + FastAPI)
-- **External API**: Masumi Network for distributed agent orchestration
-- **Response Format**: Markdown with citations
+## Architecture Rules
 
-### Key Dependencies
-- `kodosumi` - Service framework and deployment
-- `ray` - Distributed computing and task execution  
-- `openai` - Client library for LLM interactions
-- `python-dotenv` - Environment variable management
-- `pytest` - Testing framework
+1. **5-Phase Workflow**: Orchestration → Collection → Refinement → Deep-Dive → Synthesis
+2. **External Prompts**: Keep in `prompts/` directory, never hardcode
+3. **Unified State**: Single StateActor manages jobs + budget
+4. **Async Everything**: Use async/await for all I/O operations
+5. **Type Safety**: Always use type hints and dataclasses
 
-## Code Organization
+## Common Pitfalls
 
-### File Structure
-- `agent.py` - Core orchestration logic (5-phase workflow)
-- `state.py` - Simplified unified state management (jobs + budget in single AppState)
-- `context_management.py` - Token counting and smart truncation (merged from token_utils + truncation)
-- `formatting.py` - Result formatting and token analysis
-- `errors.py` - Error response handling
-- `prompts/` - Externalized agent prompts
-  - `orchestrator.txt` - Initial research planning
-  - `refinement.txt` - Gap analysis and deep-dive planning
-  - `consolidator.txt` - Final synthesis
-- `background.py` - Async Masumi job polling
-- `storage.py` - Filesystem persistence
-- `tools.py` - OpenAI function calling tools (simplified, no Pydantic models)
-- `masumi.py` - Masumi Network API client
-- `query.py` - Kodosumi service integration
+- **Don't** create agent-specific validation logic
+- **Don't** ignore actual_cost from purchase responses
+- **Don't** wait for job completion in tools (return immediately)
+- **Don't** remove citations during truncation
+- **Don't** create files unless explicitly requested
 
-### Key Patterns
-- **5-Phase Workflow**: Orchestration → Initial Collection → Refinement → Deep-Dive → Synthesis
-- **Unified State**: Single `AppState` object manages both jobs and budget tracking
-- **Context-Aware**: Automatic token counting and truncation for o3-mini (200k tokens)
-- **Budget Management**: Real-time tracking with per-agent limits in USDM
+## Testing Approach
+```python
+# Mock at the right level
+with patch('extended_audience_profiles.masumi.MasumiClient') as mock:
+    # Test business logic, not external APIs
+```
+
+## System Architecture
+
+### Layer Hierarchy
+```
+Kodosumi Service (query.py)
+    ↓
+Orchestration Engine (agent.py)
+    ↓
+Masumi Network (masumi.py)
+    ↓
+State/Storage (state.py, storage.py)
+```
+**Rule**: Never bypass layers (e.g., don't call Masumi from query.py)
+
+### Job Lifecycle
+```
+Submit → Background Poll → Store → Synthesize
+```
+- Tools return immediately after submission
+- Polling runs async with exponential backoff (10s → 60s)
+- Results stored immediately upon completion
+
+### Masumi API Flow
+```python
+# Always this exact sequence:
+response = await client.start_job(agent_name, input_data)
+purchase = await client.create_purchase(response, input_data, agent_name)
+# Then poll in background - NEVER wait in tool
+status = await client.poll_job_status(job_id, agent_name)
+```
+
+### Budget State Machine
+```
+reserve → execute → record_cost | release_on_error
+```
+- Use actual_cost from purchase response
+- ALWAYS release reservation on ANY error
+
+## Agent Constraints
+
+- **GWI**: Short prompts (5-15 words best), Chat ID for follow-ups
+- **Ask-the-crowd**: EU-only, statements not questions, age 18+
+- **Web Research**: No limits, best for trends/context
+
+## Storage Patterns
+
+```
+data/results/jobs/{job_id}/
+├── {agent_name}/{masumi_job_id}.md  # NOT result.md
+├── consolidated/profile.md
+└── metadata.json
+```
+
+## Error Recovery
+
+- Continue with partial results (graceful degradation)
+- Classify errors: transient (retry) vs permanent (fail)
+- Single agent failure ≠ job failure
+
+## Quick Reference
+
+- Models: gpt-4.1 (all agents)
+- Prices: GWI (3 USDM), Web Research (2.5 USDM), Ask-the-crowd (5 USDM)
+- Commands: `just start`, `just test`, `just stop`
