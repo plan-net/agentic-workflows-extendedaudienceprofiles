@@ -38,6 +38,23 @@ Step 4: Structure your output
 - Include bullet points for easy scanning
 - Add a "Sources Used" section at the end listing all research agents
 
+Step 5: Create Research Appendix
+After your main profile, add an "Appendix: Research Documents" section with a table containing:
+- **Title**: Extract from result if available (look for headlines, titles, or "Title:" markers), otherwise create from the question
+  - Example: "What are shopping habits of millennials?" → "Millennial Shopping Habits Analysis"
+  - Example: "Research sustainable furniture trends" → "Sustainable Furniture Market Trends"
+- **Description**: Write a 1-2 sentence summary of the key findings or main content
+- **Source**: The agent name that provided this research
+
+Format as a markdown table:
+```
+## Appendix: Research Documents
+
+| Title | Description | Source |
+|-------|-------------|---------|
+| [Extracted or generated title] | [Brief 1-2 sentence summary of findings] | [agent-name] |
+```
+
 EXAMPLE CITATION FORMAT:
 "Millennials in this segment show a strong preference for sustainable brands, with 73% actively seeking eco-friendly options [Source: audience-insights-gwi]. This aligns with their broader values around environmental responsibility, as they frequently engage with climate-related content on social media [Source: advanced-web-research]."
 

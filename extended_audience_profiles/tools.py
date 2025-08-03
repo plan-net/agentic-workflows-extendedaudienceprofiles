@@ -24,6 +24,19 @@ def get_current_state_ref() -> ray.ObjectRef:
     global _state_ref
     return _state_ref
 
+def get_or_create_state_ref() -> ray.ObjectRef:
+    """Get or create the global state reference."""
+    global _state_ref
+    if _state_ref is None:
+        # Initialize state from config
+        client = MasumiClient()  # Load config
+        _state_ref = StateManager.initialize(
+            client.budget_config,
+            client.agents_config
+        )
+        logger.info("Initialized global application state in tools.py")
+    return _state_ref
+
 
 
 

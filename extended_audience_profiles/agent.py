@@ -8,7 +8,7 @@ import time
 import ray
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
-from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_state_ref, get_current_state_ref
+from .tools import list_available_agents, get_agent_input_schema, execute_agent_job, set_state_ref, get_current_state_ref, get_or_create_state_ref
 from .state import StateManager, Task
 from .background import _poll_masumi_jobs_async
 from .storage import storage
@@ -18,9 +18,6 @@ from .errors import handle_job_submission_error, create_error_response, create_s
 
 logger = logging.getLogger(__name__)
 
-# Global state reference - initialized once per process
-_state_ref = None
-
 # Load prompts from files
 def load_prompt(filename: str) -> str:
     """Load a prompt from the prompts directory."""
@@ -29,18 +26,6 @@ def load_prompt(filename: str) -> str:
     with open(prompt_path, 'r') as f:
         return f.read().strip()
 
-def get_or_create_state_ref() -> ray.ObjectRef:
-    """Get or create the global state reference."""
-    global _state_ref
-    if _state_ref is None:
-        # Initialize state from config
-        client = MasumiClient()  # Load config
-        _state_ref = StateManager.initialize(
-            client.budget_config,
-            client.agents_config
-        )
-        logger.info("Initialized global application state")
-    return _state_ref
 
 # Phase 1: Orchestrator agent that submits jobs to Masumi agents
 orchestrator_agent = Agent(
@@ -106,6 +91,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         
         # Create a new job in the state
         job_id, state_ref = StateManager.create_job(state_ref, audience_description)
+        set_state_ref(state_ref)  # Update global state ref
         logger.info(f"Created job {job_id}")
         
         # Verify job was created
@@ -176,6 +162,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     agent_name=result.get('agent_name', 'Unknown')
                 )
                 state_ref = StateManager.add_task(state_ref, job_id, task)
+                set_state_ref(state_ref)  # Update global state ref
                 submitted_tasks.append({
                     "masumi_job_id": task.id,
                     "agent": task.agent_name
@@ -217,8 +204,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             for task in submitted_tasks:
                 await tracer.markdown(f"  • {task['agent']} [{task['masumi_job_id'][:8]}...]")
         
-        # Update state_ref to get any budget changes from tool calls
-        state_ref = get_current_state_ref() or state_ref
+        # Get the latest state ref from tools (where execute_agent_job updates it)
+        state_ref = get_current_state_ref()
+        if not state_ref:
+            raise Exception("State reference lost after tool calls")
         
         # Phase 2: Poll agent tasks in background
         logger.info("Phase 2: Starting background polling for agent task results...")
@@ -284,6 +273,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     agent_name=result.get('agent_name', 'Unknown')
                 )
                 state_ref = StateManager.add_task(state_ref, job_id, task)
+                set_state_ref(state_ref)  # Update global state ref
                 second_round_tasks.append({
                     "masumi_job_id": task.id,
                     "agent": task.agent_name
@@ -307,8 +297,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         if tracer:
             await tracer.markdown(f"\n✅ **Submitted {len(second_round_tasks)} deep-dive tasks**")
         
-        # Update state_ref to get any budget changes from refinement tool calls
-        state_ref = get_current_state_ref() or state_ref
+        # Get the latest state ref from tools (where execute_agent_job updates it)
+        state_ref = get_current_state_ref()
+        if not state_ref:
+            raise Exception("State reference lost after refinement tool calls")
         
         # Phase 4: Poll for second round results
         logger.info("Phase 4: Second round results phase...")
@@ -318,6 +310,14 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         if second_round_tasks:
             if tracer:
                 await tracer.markdown("⏳ Polling for deep-dive results...")
+            
+            # Verify state before second polling
+            state = ray.get(state_ref)
+            logger.info(f"Before second polling - Jobs in state: {list(state.jobs.keys())}")
+            if job_id in state.jobs:
+                logger.info(f"Job {job_id} has {len(state.jobs[job_id].tasks)} tasks")
+            else:
+                logger.error(f"Job {job_id} NOT FOUND in state before second polling!")
             
             # Poll again for second round
             state_ref = await _poll_masumi_jobs_async(state_ref, job_id, tracer)
@@ -383,7 +383,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                 await tracer.markdown("- ⚠️ Some content was truncated to fit context window")
             
             # Get the most current state before showing final budget
-            state_ref = get_current_state_ref() or state_ref
+            state_ref = get_current_state_ref()
+            if not state_ref:
+                logger.warning("No state ref available for final budget summary")
+                state_ref = get_or_create_state_ref()
             
             # Show final budget summary
             final_budget = StateManager.get_budget_summary(state_ref)
