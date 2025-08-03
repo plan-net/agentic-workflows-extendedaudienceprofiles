@@ -2,7 +2,7 @@
 # All prices are in USDM (USD-pegged stablecoin on Masumi Network)
 # 1 USDM = 1,000,000 lovelace
 budget:
-  total_budget: 20.0  # Total budget across all agents in USDM
+  total_budget: 30.0  # Total budget across all agents in USDM
   network: "Preprod"  # Network for Masumi transactions (Preprod/Mainnet)
   
 # Available agents configuration
@@ -53,4 +53,36 @@ agents:
       - "What are the latest trends in sustainable furniture design and which brands are leading innovation in eco-friendly materials for nursery furniture?"
       - "Research the current market size and growth projections for baby furniture in North America, including key statistics on spending patterns for first-time parents"
       - "Find expert opinions and consumer reviews about the most important safety features parents look for when purchasing cribs and changing tables"
+ 
+  - name: "ask-the-crowd"
+    endpoint: "http://138.68.88.241:8000/Ask%20The%20Crowd"
+    description: "EU-specific crowd opinion and survey platform with web search. Validates statements using real consumer feedback. Best used in refinement phase to test insights from initial research. Start prompts with 'Survey:' or 'Opinion:' followed by your statement. Demographics (gender/age) are set via separate fields, not in the statement."
+    price: 2.0  # Expected cost per job in USDM
+    max_total_spend: 8.0  # Can call this agent until 8.0 USDM is spent
+    enabled: true
+    capabilities:
+      - "Survey analysis: Get responses on 5-point scale (strongly disagree to strongly agree) from EU consumers"
+      - "Opinion soundbites: Collect 5 authentic consumer perspectives on your statement"
+      - "Web search integration: Researches context before gathering opinions for more informed responses"
+      - "Demographic targeting: Filter responses by gender and age range (18+ only) using separate input fields"
+      - "EU market coverage: Data from major European Union countries only"
+      - "Statement validation: Test hypotheses and insights discovered in initial research"
+      - "Sentiment analysis: Understand how EU consumers feel about specific claims or trends"
+    best_for: "Validating insights in refinement phase, testing statements with targeted demographics (via separate fields), getting EU-specific sentiment with web-informed context, adding human perspective to data findings"
+    example_prompts:
+      - "Sustainability is a key factor when purchasing baby furniture"
+      - "Ergonomic home office furniture is worth the extra cost"
+      - "Renting furniture is preferable to buying"
+      - "Flexible work-from-home furniture solutions are essential"
+      - "Brand reputation influences furniture purchasing decisions"
+    limitations:
+      - "EU countries only - no data from US, Asia, or other markets"
+      - "Requires statement format (not questions) - frame as assertions to validate"
+      - "Must start with 'Survey:' or 'Opinion:' to specify analysis type"
+      - "IMPORTANT: Do NOT include demographics in statement - use separate gender/age input fields"
+      - "Write statements as you would present them to actual survey participants"
+      - "Minimum age requirement: 18+ (enforced via age field)"
+      - "Best results when used to validate specific findings from initial research"
+      - "Limited to 5 opinion soundbites per query"
+      - "Survey responses use 5-point scale (Strongly Disagree to Strongly Agree)"
  

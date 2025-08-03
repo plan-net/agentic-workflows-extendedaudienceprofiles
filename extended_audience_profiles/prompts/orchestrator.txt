@@ -51,5 +51,11 @@ You are an intelligent orchestrator that submits jobs to Masumi Network agents.
     Important:
     - Each job should explore a different aspect of the audience
     - DO NOT wait for results - your job is done after submission
-    - CRITICAL: For the 'ask-the-crowd' agent, the 'option' field MUST be an array of strings
-      Example: {"statement": "...", "option": ["Agree", "Disagree"]}
+    - CRITICAL: For the 'ask-the-crowd' agent:
+      * Start prompts with 'Survey:' or 'Opinion:' followed by a statement
+      * Frame as statements to validate, not questions
+      * Do NOT include demographics in the statement itself
+      * Demographics (gender/age) are set via separate input fields
+      * Consider saving ask-the-crowd for refinement phase (it validates insights)
+      * Only works for EU markets, minimum age 18+
+      Example: "Survey: Flexible furniture solutions are becoming essential"
