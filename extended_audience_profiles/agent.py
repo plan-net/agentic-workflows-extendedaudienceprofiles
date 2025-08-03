@@ -31,7 +31,7 @@ def load_prompt(filename: str) -> str:
 orchestrator_agent = Agent(
     name="audience-profile-orchestrator",
     instructions=load_prompt("orchestrator.txt"),
-    model="gpt-4o",
+    model="gpt-4.1",
     tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
 )
 
@@ -39,7 +39,7 @@ orchestrator_agent = Agent(
 refinement_agent = Agent(
     name="audience-profile-refinement",
     instructions=load_prompt("refinement.txt"),
-    model="o3-mini",
+    model="gpt-4.1",
     tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
 )
 
@@ -47,7 +47,7 @@ refinement_agent = Agent(
 consolidator_agent = Agent(
     name="audience-profile-consolidator",
     instructions=load_prompt("consolidator.txt"),
-    model="o3-mini",
+    model="gpt-4.1",
     tools=[]  # Consolidator doesn't need tools - just processes provided data
 )
 
@@ -345,7 +345,7 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         # Prepare results for consolidator with token management
         research_results, token_metadata = format_research_results(
             results['results'], 
-            model="o3-mini",
+            model="gpt-4.1",
             tracer=tracer
         )
         

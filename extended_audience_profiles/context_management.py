@@ -58,6 +58,7 @@ class ContextManager:
         "gpt-4-turbo": 128000,
         "gpt-4o": 128000,
         "gpt-4o-mini": 128000,
+        "gpt-4.1": 128000,
     }
     
     # Model to encoding mapping (for tiktoken)
@@ -68,6 +69,7 @@ class ContextManager:
         "gpt-4-turbo": "cl100k_base",
         "gpt-4o": "cl100k_base",
         "gpt-4o-mini": "cl100k_base",
+        "gpt-4.1": "cl100k_base",
     }
     
     # Section patterns to identify different parts of content
