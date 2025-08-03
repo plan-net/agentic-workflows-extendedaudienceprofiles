@@ -12,6 +12,7 @@ from masumi import Config, Purchase
 import logging
 import requests
 import secrets
+from .exceptions import AgentNotFoundError, MasumiNetworkError
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,17 @@ class MasumiClient:
         self._validate_agent_availability()
     
     def _load_config(self) -> None:
-        """Load configuration from masumi.yaml file."""
+        """
+        Load configuration from masumi.yaml file.
+        
+        Reads the masumi.yaml configuration file and extracts:
+        - Budget configuration settings
+        - Available agents and their endpoints
+        - Masumi SDK configuration from environment variables
+        
+        Raises:
+            FileNotFoundError: If configuration file doesn't exist
+        """
         config_file = Path(self.config_path)
         if not config_file.exists():
             raise FileNotFoundError(f"Masumi configuration not found: {self.config_path}")
@@ -55,7 +66,24 @@ class MasumiClient:
         # No longer tracking spending at instance level - using Ray budget state
     
     async def _make_request(self, method: str, url: str, **kwargs) -> requests.Response:
-        """Make HTTP request with unified error handling."""
+        """
+        Make HTTP request with unified error handling.
+        
+        Provides a centralized method for making HTTP requests with consistent
+        timeout handling and error management. Supports GET and POST methods.
+        
+        Args:
+            method: HTTP method ('GET' or 'POST')
+            url: URL to request
+            **kwargs: Additional arguments passed to requests
+            
+        Returns:
+            Response object from the request
+            
+        Raises:
+            RuntimeError: On timeout or connection errors
+            ValueError: If unsupported HTTP method is provided
+        """
         timeout = kwargs.pop('timeout', 5.0)
         
         try:
@@ -74,7 +102,21 @@ class MasumiClient:
             raise RuntimeError(f"Connection error: {url}")
     
     def _get_agent_endpoint(self, agent_name: str) -> str:
-        """Get and validate agent endpoint."""
+        """
+        Get and validate agent endpoint.
+        
+        Retrieves the endpoint URL for a specific agent and validates that
+        the agent exists, is enabled, and has a valid endpoint configured.
+        
+        Args:
+            agent_name: Name of the agent to get endpoint for
+            
+        Returns:
+            Agent endpoint URL
+            
+        Raises:
+            ValueError: If agent not found, disabled, or missing endpoint
+        """
         agent = self.get_agent_config(agent_name)
         if not agent:
             raise ValueError(f"Agent '{agent_name}' not found")
@@ -86,7 +128,16 @@ class MasumiClient:
         return endpoint
     
     def _validate_agent_availability(self) -> None:
-        """Validate all configured agents are available at startup."""
+        """
+        Validate all configured agents are available at startup.
+        
+        Performs a health check on all configured agents by calling their
+        availability endpoint. This ensures all agents are reachable and
+        ready to accept jobs before the service starts processing requests.
+        
+        Raises:
+            RuntimeError: If any configured agents are unavailable
+        """
         logger.info("Validating agent availability...")
         unavailable = []
         
@@ -105,9 +156,12 @@ class MasumiClient:
                 else:
                     logger.info(f"Agent '{agent['name']}' is available")
                     
+            except (OSError, requests.RequestException) as e:
+                unavailable.append(f"{agent['name']} (network error)")
+                logger.error(f"Network error checking '{agent['name']}': {str(e)}")
             except Exception as e:
                 unavailable.append(f"{agent['name']} ({type(e).__name__})")
-                logger.error(f"Error checking '{agent['name']}': {str(e)}")
+                logger.error(f"Unexpected error checking '{agent['name']}': {str(e)}")
         
         if unavailable:
             raise RuntimeError(f"Agents not available: {', '.join(unavailable)}")
@@ -196,6 +250,8 @@ class MasumiClient:
                 'actual_cost': cost
             }
             
+        except (OSError, requests.RequestException) as e:
+            raise MasumiNetworkError("create purchase", agent_name, e)
         except Exception as e:
             raise RuntimeError(f"Failed to create purchase: {str(e)}")
     
@@ -314,7 +370,18 @@ class MasumiClient:
         }
     
     def _map_type(self, masumi_type: str) -> str:
-        """Map Masumi types to JSON Schema types."""
+        """
+        Map Masumi types to JSON Schema types.
+        
+        Converts Masumi-specific field types to standard JSON Schema types
+        for compatibility with OpenAI function calling format.
+        
+        Args:
+            masumi_type: Masumi field type (e.g., 'string', 'textarea', 'option')
+            
+        Returns:
+            Corresponding JSON Schema type (defaults to 'string' if unknown)
+        """
         mapping = {
             'string': 'string',
             'textarea': 'string',

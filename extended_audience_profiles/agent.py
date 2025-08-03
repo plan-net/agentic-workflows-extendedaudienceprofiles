@@ -13,12 +13,27 @@ from .storage import storage
 from .masumi import MasumiClient
 from .formatting import format_research_results, format_results_for_refinement, display_token_analysis
 from .errors import handle_job_submission_error, create_error_response, create_success_response
+from .exceptions import JobNotFoundError, StorageError
 
 logger = logging.getLogger(__name__)
 
 # Load prompts from files
 def load_prompt(filename: str) -> str:
-    """Load a prompt from the prompts directory."""
+    """
+    Load a prompt from the prompts directory.
+    
+    Reads prompt files from the prompts subdirectory relative to this module.
+    Used to externalize agent instructions for easier maintenance.
+    
+    Args:
+        filename: Name of the prompt file to load (e.g., 'orchestrator.txt')
+        
+    Returns:
+        Content of the prompt file with whitespace stripped
+        
+    Raises:
+        FileNotFoundError: If prompt file doesn't exist
+    """
     from pathlib import Path
     prompt_path = Path(__file__).parent / "prompts" / filename
     with open(prompt_path, 'r') as f:
@@ -67,12 +82,10 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
     try:
         logger.info(f"Starting audience profile generation for: {audience_description}")
         
-        # Initialize state actor
         from .masumi import MasumiClient
         client = MasumiClient()
         actor = init_state_actor(client.budget_config, client.agents_config)
         
-        # Create a new job in the state
         job_id = await actor.create_job.remote(audience_description)
         logger.info(f"Created job {job_id}")
         
@@ -93,8 +106,11 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                     'status': 'started'
                 }
             )
+        except StorageError:
+            # Storage module already logged the error
+            logger.warning(f"Failed to save initial job metadata for {job_id}")
         except Exception as e:
-            logger.error(f"Failed to save initial job metadata: {str(e)}")
+            logger.error(f"Unexpected error saving job metadata: {str(e)}")
         
         # Phase 1: Run orchestrator to submit jobs
         logger.info("Phase 1: Running orchestrator agent to submit jobs...")
@@ -186,8 +202,6 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             for task in submitted_tasks:
                 await tracer.markdown(f"  • {task['agent']} [{task['masumi_job_id'][:8]}...]")
         
-        # No need to get state ref anymore - actor maintains state
-        
         # Phase 2: Poll agent tasks in background
         logger.info("Phase 2: Starting background polling for agent task results...")
         if tracer:
@@ -276,8 +290,6 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
         
         if tracer:
             await tracer.markdown(f"\n✅ **Submitted {len(second_round_tasks)} deep-dive tasks**")
-        
-        # No need to get state ref anymore - actor maintains state
         
         # Phase 4: Poll for second round results
         logger.info("Phase 4: Second round results phase...")
@@ -388,8 +400,11 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
                 }
             )
             logger.info(f"Saved consolidated profile for job execution {job_id}")
+        except StorageError:
+            # Storage module already logged the error
+            logger.warning("Failed to save consolidated profile to storage")
         except Exception as e:
-            logger.error(f"Failed to save consolidated profile: {str(e)}")
+            logger.error(f"Unexpected error saving consolidated profile: {str(e)}")
         
         # Prepare final response
         return create_success_response(
@@ -398,25 +413,37 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
             job_id=job_id,
             results=results,
             submitted_tasks=submitted_tasks,
-            second_round_tasks=second_round_tasks,
-            state_ref=None  # No longer needed
+            second_round_tasks=second_round_tasks
         )
         
+    except JobNotFoundError as e:
+        logger.error(f"Job not found: {str(e)}")
+        return create_error_response(audience_description, f"Job tracking error: {str(e)}")
+    except (RuntimeError, AttributeError) as e:
+        logger.error(f"Configuration or state error: {str(e)}")
+        return create_error_response(audience_description, f"System configuration error: {str(e)}")
     except Exception as e:
-        logger.error(f"Error generating audience profile: {str(e)}")
-        return create_error_response(audience_description, str(e))
+        logger.error(f"Unexpected error generating audience profile: {str(e)}")
+        return create_error_response(audience_description, f"Unexpected error: {str(e)}")
 
 
 def generate_audience_profile_sync(audience_description: str) -> Dict[str, Any]:
     """
     Synchronous wrapper for generate_audience_profile.
-    Used for compatibility with existing code.
+    
+    Creates a new event loop and runs the async generate_audience_profile
+    function synchronously. Used for compatibility with synchronous code
+    that cannot use async/await.
     
     Args:
         audience_description: Description of the target audience
         
     Returns:
         Dict with profile data and metadata
+        
+    Note:
+        This creates a new event loop, so it should not be called from
+        within an existing async context.
     """
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

@@ -7,6 +7,7 @@ from enum import Enum
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 import logging
+from .exceptions import TokenLimitExceededError
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +204,20 @@ class ContextManager:
         results: Dict[str, Dict],
         token_budget: int
     ) -> Tuple[Dict[str, Dict], Dict[str, TruncationResult]]:
-        """Truncate each result proportionally."""
+        """
+        Truncate each result proportionally based on its share of total tokens.
+        
+        This strategy allocates token budget to each result based on its 
+        original size relative to the total. Larger results get more space,
+        smaller results get less, maintaining the relative importance.
+        
+        Args:
+            results: Dictionary of job results to truncate
+            token_budget: Maximum tokens allowed
+            
+        Returns:
+            Tuple of (truncated results dict, truncation metadata dict)
+        """
         truncated_results = {}
         truncation_metadata = {}
         
@@ -255,7 +269,21 @@ class ContextManager:
         results: Dict[str, Dict],
         token_budget: int
     ) -> Tuple[Dict[str, Dict], Dict[str, TruncationResult]]:
-        """Truncate by removing less important sections first."""
+        """
+        Truncate by intelligently removing lower-priority sections.
+        
+        This strategy attempts to preserve the most important content by
+        removing entire sections based on their priority. Sections like
+        references, appendices, and metadata are removed first, while
+        key findings and summaries are preserved.
+        
+        Args:
+            results: Dictionary of job results to truncate
+            token_budget: Maximum tokens allowed
+            
+        Returns:
+            Tuple of (truncated results dict, truncation metadata dict)
+        """
         truncated_results = {}
         truncation_metadata = {}
         
@@ -308,7 +336,21 @@ class ContextManager:
         text: str,
         token_budget: int
     ) -> Tuple[str, List[str]]:
-        """Remove sections from text based on priority until it fits budget."""
+        """
+        Remove sections from text based on priority until it fits budget.
+        
+        This method identifies and removes entire sections of content based on
+        their priority level. It starts with the lowest priority sections
+        (like examples, methodology) and works up to higher priority content
+        (like key findings, executive summary). Citations are never removed.
+        
+        Args:
+            text: The text to potentially truncate
+            token_budget: Maximum allowed tokens
+            
+        Returns:
+            Tuple of (truncated text, list of section names that were removed)
+        """
         sections_removed = []
         working_text = text
         
@@ -349,7 +391,22 @@ class ContextManager:
         token_limit: int,
         preserve_ending: bool = False
     ) -> str:
-        """Truncate text to fit within token limit."""
+        """
+        Truncate text to fit within token limit using binary search.
+        
+        This method performs a hard truncation when section-based removal
+        isn't sufficient. It uses binary search to find the optimal truncation
+        point that stays within the token limit. Can optionally preserve both
+        the beginning and end of the text.
+        
+        Args:
+            text: The text to truncate
+            token_limit: Maximum allowed tokens
+            preserve_ending: If True, keeps both beginning and end of text
+            
+        Returns:
+            Truncated text with a truncation marker
+        """
         tokens = self.estimate_tokens(text)
         
         if tokens <= token_limit:
@@ -383,7 +440,23 @@ class ContextManager:
 
 
 def format_token_summary(metadata: Dict[str, any]) -> str:
-    """Format token metadata for display."""
+    """
+    Format token metadata for display.
+    
+    Creates a human-readable summary of token usage statistics including
+    total tokens, available budget, usage percentage, and warnings if
+    the context window is exceeded.
+    
+    Args:
+        metadata: Dictionary containing token analysis results with keys:
+            - total_tokens: Total tokens used
+            - available_tokens: Available token budget
+            - percentage_used: Percentage of budget used
+            - fits_in_context: Whether content fits in context window
+            
+    Returns:
+        Formatted string with token usage summary
+    """
     lines = []
     lines.append(f"Total tokens: {metadata['total_tokens']:,}")
     lines.append(f"Available budget: {metadata['available_tokens']:,}")

@@ -9,12 +9,28 @@ from typing import List, Dict, Any, Optional
 from .state import Task
 from .masumi import MasumiClient
 from .storage import storage
+from .exceptions import StorageError
 
 logger = logging.getLogger(__name__)
 
 
 async def _process_task_status(task, status_result, job_id, tracer=None):
-    """Process a single task status result and return update if needed."""
+    """
+    Process a single task status result and return update if needed.
+    
+    Examines the status of a Masumi job and creates appropriate updates
+    for the state actor. Handles completed and failed states, saves results
+    to storage, and extracts hash metadata when available.
+    
+    Args:
+        task: Task object being checked
+        status_result: Status response from Masumi API
+        job_id: Parent job ID for storage organization
+        tracer: Optional tracer for UI updates
+        
+    Returns:
+        Dict with task update info or None if no update needed
+    """
     task_update = None
     
     # Show status in tracer
@@ -57,8 +73,11 @@ async def _process_task_status(task, status_result, job_id, tracer=None):
                 content=result_content,
                 metadata=metadata
             )
+        except StorageError:
+            # Already logged by storage module
+            raise
         except Exception as e:
-            logger.error(f"Failed to save agent result to storage: {str(e)}")
+            logger.error(f"Unexpected error saving agent result: {str(e)}")
     
     elif status_result['status'] == 'failed':
         # Task failed
@@ -79,18 +98,42 @@ async def _process_task_status(task, status_result, job_id, tracer=None):
 def poll_masumi_jobs(actor, job_id: str) -> None:
     """
     Poll all pending agent tasks in a job until they complete or fail.
-    Updates the actor state as tasks complete.
+    
+    Ray remote task that polls Masumi Network for job status updates.
+    Runs the async polling logic using asyncio.run since Ray remote
+    tasks execute synchronously.
     
     Args:
-        actor: StateActor instance
+        actor: StateActor instance for state management
         job_id: ID of the job to poll
+        
+    Note:
+        This is a Ray remote function that wraps the async implementation.
     """
     # Ray remote tasks run the async code with asyncio.run
     asyncio.run(_poll_masumi_jobs_async(actor, job_id))
 
 
 async def _poll_masumi_jobs_async(actor, job_id: str, tracer=None) -> None:
-    """Async implementation of job polling"""
+    """
+    Async implementation of job polling.
+    
+    Continuously polls Masumi Network for status updates on all tasks
+    in a job. Uses exponential backoff to reduce API load. Updates
+    the state actor as tasks complete or fail, and saves results to
+    storage.
+    
+    Args:
+        actor: StateActor instance for state management
+        job_id: ID of the job containing tasks to poll
+        tracer: Optional tracer for progress updates
+        
+    Features:
+        - Exponential backoff from 10s to 60s intervals
+        - 30-minute timeout with automatic failure marking
+        - Batch updates for efficiency
+        - Progress reporting through tracer
+    """
     # First verify job exists
     job = await actor.get_job.remote(job_id)
     if not job:
@@ -170,8 +213,11 @@ async def _poll_masumi_jobs_async(actor, job_id: str, tracer=None) -> None:
                 if task_update:
                     task_updates.append(task_update)
                     
+            except (OSError, TimeoutError) as e:
+                logger.error(f"Network error polling agent task {task.id}: {str(e)}")
+                # Don't mark as failed immediately, will retry on next poll
             except Exception as e:
-                logger.error(f"Error polling agent task {task.id}: {str(e)}")
+                logger.error(f"Unexpected error polling agent task {task.id}: {str(e)}")
                 # Don't mark as failed immediately, will retry on next poll
         
         # Apply all collected updates in a single batch operation

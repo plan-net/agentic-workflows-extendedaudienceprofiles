@@ -18,7 +18,6 @@ def format_research_results(
     Returns:
         Tuple of (formatted_results, token_metadata)
     """
-    # Initialize context manager
     context_mgr = ContextManager(model)
     
     # First check if results fit within context
@@ -160,7 +159,20 @@ async def display_token_analysis(tracer, results: Dict[str, Any], token_metadata
 
 
 def find_agent_name_from_previous_calls(items: List[Any], current_index: int) -> Optional[str]:
-    """Look backwards to find agent name from execute_agent_job calls."""
+    """
+    Look backwards through tool call history to find the agent name.
+    
+    This function searches through previous tool calls to find the most recent
+    execute_agent_job call and extracts the agent_name parameter from it.
+    Used when an error occurs and we need to identify which agent failed.
+    
+    Args:
+        items: List of tool call items from the conversation history
+        current_index: Current position in the items list
+        
+    Returns:
+        Optional[str]: Agent name if found, None otherwise
+    """
     import json
     
     for j in range(current_index - 1, -1, -1):

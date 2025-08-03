@@ -14,14 +14,40 @@ logger = logging.getLogger(__name__)
 _actor = None
 
 def get_state_actor():
-    """Get the state actor."""
+    """
+    Get the global state actor instance.
+    
+    Returns the singleton StateActor instance that manages all job
+    and budget state across the distributed system.
+    
+    Returns:
+        StateActor: The global state actor instance
+        
+    Raises:
+        RuntimeError: If actor not initialized via init_state_actor()
+    """
     global _actor
     if _actor is None:
         raise RuntimeError("StateActor not initialized. Call init_state_actor() first.")
     return _actor
 
 def init_state_actor(budget_config: Dict[str, Any], agents_config: List[Dict[str, Any]]):
-    """Initialize the state actor."""
+    """
+    Initialize the global state actor.
+    
+    Creates a singleton Ray actor that manages all job execution state
+    and budget tracking. Should be called once at application startup.
+    
+    Args:
+        budget_config: Budget configuration with total_budget and per-agent limits
+        agents_config: List of agent configurations with names and endpoints
+        
+    Returns:
+        StateActor: The initialized state actor instance
+        
+    Note:
+        If already initialized, returns existing actor with a warning.
+    """
     global _actor
     if _actor is not None:
         logger.warning("StateActor already initialized")

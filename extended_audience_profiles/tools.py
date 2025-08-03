@@ -5,13 +5,10 @@ from typing import Dict, Any, List, Optional
 from agents import function_tool
 from .masumi import MasumiClient
 from .state import get_state_actor
+from .exceptions import AgentNotFoundError, MasumiNetworkError
 import logging
 
 logger = logging.getLogger(__name__)
-
-# No longer need state reference globals - using actor pattern
-
-
 
 
 @function_tool
@@ -64,11 +61,18 @@ async def list_available_agents() -> Dict[str, Any]:
             'total_remaining': budget_summary['total_remaining'],
             'available_agents': agents_info
         }
-    except Exception as e:
-        logger.error(f"Error listing agents: {str(e)}")
+    except (RuntimeError, AttributeError) as e:
+        logger.error(f"Error accessing Masumi client: {str(e)}")
         return {
             'success': False,
-            'error': str(e),
+            'error': f"Configuration error: {str(e)}",
+            'available_agents': []
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error listing agents: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Unexpected error: {str(e)}",
             'available_agents': []
         }
 
@@ -105,11 +109,21 @@ async def get_agent_input_schema(agent_name: str) -> Dict[str, Any]:
             'schema': schema,
             'instructions': f"Format your input according to the schema for {agent_name}"
         }
-    except Exception as e:
-        logger.error(f"Error getting schema for {agent_name}: {str(e)}")
+    except AgentNotFoundError:
+        # Already handled above
+        raise
+    except MasumiNetworkError as e:
+        logger.error(f"Network error getting schema for {agent_name}: {str(e)}")
         return {
             'success': False,
             'error': str(e),
+            'schema': None
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error getting schema for {agent_name}: {str(e)}")
+        return {
+            'success': False,
+            'error': f"Unexpected error: {str(e)}",
             'schema': None
         }
 
@@ -241,14 +255,16 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
                 }
             }
             
-        except Exception as e:
+        except (OSError, TimeoutError) as e:
+            # Network or timeout errors
+            logger.error(f"Network error during job execution: {str(e)}")
             # Release budget reservation on any error
             try:
                 actor = get_state_actor()
                 await actor.release_reservation.remote(agent_name, expected_cost)
             except RuntimeError:
                 pass
-            raise
+            raise MasumiNetworkError("job execution", agent_name, e)
         
     except ValueError as ve:
         # Validation errors
@@ -268,12 +284,12 @@ async def execute_agent_job(agent_name: str, input_data: Dict[str, Any]) -> Dict
             'result': None,
             'error_type': 'api_error'
         }
-    except Exception as e:
-        # Other unexpected errors
-        logger.error(f"Unexpected error executing job with {agent_name}: {str(e)}")
+    except (TypeError, AttributeError) as e:
+        # Programming errors
+        logger.error(f"Programming error executing job with {agent_name}: {str(e)}")
         return {
             'success': False,
-            'error': str(e),
+            'error': f"Internal error: {str(e)}",
             'result': None,
-            'error_type': 'unexpected_error'
+            'error_type': 'internal_error'
         }

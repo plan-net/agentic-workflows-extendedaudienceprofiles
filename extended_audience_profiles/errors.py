@@ -59,8 +59,7 @@ def create_success_response(
     job_id: str,
     results: Dict[str, Any],
     submitted_tasks: List[Dict[str, str]],
-    second_round_tasks: List[Dict[str, str]] = None,
-    state_ref: Optional[Any] = None
+    second_round_tasks: List[Dict[str, str]] = None
 ) -> Dict[str, Any]:
     """Create a standardized success response with metadata."""
     if second_round_tasks is None:
@@ -86,6 +85,6 @@ def create_success_response(
         "error": None
     }
     
-    # Note: budget summary is now handled at the actor level, not passed through state_ref
+    # Budget summary is now handled at the actor level
     
     return response

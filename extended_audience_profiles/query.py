@@ -7,7 +7,6 @@ from kodosumi import dtypes
 from ray import serve
 from .agent import generate_audience_profile
 
-# Create ServeAPI instance
 app = ServeAPI()
 
 
@@ -42,6 +41,19 @@ profile_model = F.Model(
 async def enter(request: fastapi.Request, inputs: dict):
     """
     Endpoint function for handling audience profile generation requests.
+    
+    Main entry point for the Extended Audience Profiles service. Validates
+    input and launches the profile generation workflow.
+    
+    Args:
+        request: FastAPI request object
+        inputs: Dictionary containing 'audience_description' field
+        
+    Returns:
+        Launch object that executes the profile generation
+        
+    Raises:
+        InputsError: If audience_description is missing or empty
     """
     # Parse and cleanse inputs
     audience_description = inputs.get("audience_description", "").strip()
@@ -73,12 +85,32 @@ fast_app = ExtendedAudienceProfiles.bind()
 
 @app.get("/health")
 async def health():
-    """Health check endpoint."""
+    """
+    Health check endpoint.
+    
+    Simple health check endpoint for monitoring and load balancer checks.
+    
+    Returns:
+        Dict with status 'healthy' and service name
+    """
     return {"status": "healthy", "service": "extended-audience-profiles"}
 
 
 async def run_profile_generation(inputs: dict, tracer: Tracer):
-    """Execute the profile generation and stream results via tracer."""
+    """
+    Execute the profile generation and stream results via tracer.
+    
+    Main workflow execution function that runs the 5-phase profile generation
+    process and streams progress updates through the tracer interface.
+    
+    Args:
+        inputs: Dictionary containing 'audience_description'
+        tracer: Kodosumi tracer for streaming progress updates
+        
+    Note:
+        This function is executed asynchronously by the Launch system
+        and streams all output through the tracer for real-time updates.
+    """
     audience_description = inputs.get("audience_description", "")
     
     # Show progress

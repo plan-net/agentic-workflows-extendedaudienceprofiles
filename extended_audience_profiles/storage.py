@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import logging
+from .exceptions import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -35,49 +36,117 @@ class ResultStorage:
         self.keep_days = int(os.getenv('RESULTS_KEEP_DAYS', '90'))
         self.compress_after_days = int(os.getenv('RESULTS_COMPRESS_AFTER_DAYS', '30'))
         
-        # Create directories if they don't exist
         self._ensure_directories()
         
         logger.info(f"ResultStorage initialized with base_dir: {self.base_dir}")
     
     def _ensure_directories(self) -> None:
-        """Ensure all required directories exist"""
+        """
+        Ensure all required directories exist.
+        
+        Creates the base directory and jobs directory if they don't exist.
+        Called during initialization to set up the storage structure.
+        """
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.jobs_dir.mkdir(exist_ok=True)
     
     def _get_job_dir(self, job_id: str) -> Path:
-        """Get directory path for a job"""
+        """
+        Get directory path for a job.
+        
+        Args:
+            job_id: ID of the job execution
+            
+        Returns:
+            Path to the job's directory
+        """
         return self.jobs_dir / job_id
     
     def _get_agent_dir(self, job_id: str, agent_name: str) -> Path:
-        """Get agent-specific directory for a job"""
+        """
+        Get agent-specific directory for a job.
+        
+        Sanitizes the agent name to be filesystem-safe by replacing
+        problematic characters.
+        
+        Args:
+            job_id: ID of the job execution
+            agent_name: Name of the agent
+            
+        Returns:
+            Path to the agent's directory within the job
+        """
         # Clean agent name for filesystem
         safe_agent_name = agent_name.replace('/', '-').replace(' ', '_')
         return self._get_job_dir(job_id) / safe_agent_name
     
     def _get_consolidated_dir(self, job_id: str) -> Path:
-        """Get consolidated directory for a job"""
+        """
+        Get consolidated directory for a job.
+        
+        Args:
+            job_id: ID of the job execution
+            
+        Returns:
+            Path to the consolidated results directory
+        """
         return self._get_job_dir(job_id) / "consolidated"
     
     async def _write_json(self, file_path: Path, data: Dict[str, Any]) -> None:
-        """Write JSON data to file"""
+        """
+        Write JSON data to file.
+        
+        Asynchronously writes JSON data with pretty formatting.
+        
+        Args:
+            file_path: Path to write to
+            data: Dictionary to serialize as JSON
+        """
         async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
             await f.write(json.dumps(data, indent=2))
     
     async def _read_json(self, file_path: Path) -> Dict[str, Any]:
-        """Read JSON data from file"""
+        """
+        Read JSON data from file.
+        
+        Asynchronously reads and parses JSON data.
+        
+        Args:
+            file_path: Path to read from
+            
+        Returns:
+            Parsed JSON data as dictionary, empty dict if file doesn't exist
+        """
         if not file_path.exists():
             return {}
         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
             return json.loads(await f.read())
     
     async def _write_markdown(self, file_path: Path, content: str) -> None:
-        """Write markdown content to file"""
+        """
+        Write markdown content to file.
+        
+        Asynchronously writes text content with UTF-8 encoding.
+        
+        Args:
+            file_path: Path to write to
+            content: Markdown content to write
+        """
         async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
             await f.write(content)
     
     async def _read_markdown(self, file_path: Path) -> str:
-        """Read markdown content from file"""
+        """
+        Read markdown content from file.
+        
+        Asynchronously reads text content with UTF-8 encoding.
+        
+        Args:
+            file_path: Path to read from
+            
+        Returns:
+            File content as string, empty string if file doesn't exist
+        """
         if not file_path.exists():
             return ""
         async with aiofiles.open(file_path, 'r', encoding='utf-8') as f:
@@ -160,9 +229,12 @@ class ResultStorage:
             # Update job metadata
             await self._update_job_metadata(job_id, masumi_job_id, agent_name)
             
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Error saving agent result: {str(e)}")
-            raise
+            raise StorageError("save agent result", str(agent_dir), e)
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"Error serializing agent result data: {str(e)}")
+            raise StorageError("serialize agent data", str(json_file), e)
     
     async def save_consolidated_profile(
         self,
@@ -226,9 +298,12 @@ class ResultStorage:
             # Update master index
             await self._update_master_index(job_id, metadata)
             
-        except Exception as e:
+        except OSError as e:
             logger.error(f"Error saving consolidated profile: {str(e)}")
-            raise
+            raise StorageError("save consolidated profile", str(consolidated_dir), e)
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"Error serializing profile data: {str(e)}")
+            raise StorageError("serialize profile data", str(summary_file), e)
     
     async def save_job_metadata(
         self,
@@ -251,16 +326,17 @@ class ResultStorage:
             # Load existing metadata if it exists
             existing_metadata = await self._read_json(metadata_file)
             
-            # Update metadata
             existing_metadata.update(metadata)
             existing_metadata['last_updated'] = datetime.now().isoformat()
             
-            # Write metadata
             await self._write_json(metadata_file, existing_metadata)
             
-        except Exception as e:
-            logger.error(f"Error saving submission metadata: {str(e)}")
-            raise
+        except OSError as e:
+            logger.error(f"Error saving job metadata: {str(e)}")
+            raise StorageError("save job metadata", str(metadata_file), e)
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.error(f"Error serializing job metadata: {str(e)}")
+            raise StorageError("serialize job metadata", str(metadata_file), e)
     
     async def _update_job_metadata(
         self,
@@ -268,7 +344,17 @@ class ResultStorage:
         masumi_job_id: str,
         agent_name: str
     ) -> None:
-        """Update job metadata when an agent completes"""
+        """
+        Update job metadata when an agent completes.
+        
+        Adds the completed agent to the job's metadata file, tracking
+        which agents have finished processing.
+        
+        Args:
+            job_id: ID of the job execution
+            masumi_job_id: ID of the completed Masumi job
+            agent_name: Name of the agent that completed
+        """
         metadata_file = self._get_job_dir(job_id) / "metadata.json"
         
         # Load existing metadata
@@ -292,7 +378,16 @@ class ResultStorage:
         job_id: str,
         metadata: Dict[str, Any]
     ) -> None:
-        """Update the master index file"""
+        """
+        Update the master index file.
+        
+        Maintains a chronological index of all completed jobs for quick
+        listing and search. Handles both old and new index formats.
+        
+        Args:
+            job_id: ID of the job execution
+            metadata: Job metadata to include in index
+        """
         # Load existing index
         index = await self._read_json(self.index_file)
         if not isinstance(index, list):
@@ -338,7 +433,6 @@ class ResultStorage:
             'consolidated_profile': None
         }
         
-        # Load metadata
         metadata_file = job_dir / "metadata.json"
         results['metadata'] = await self._read_json(metadata_file)
         
