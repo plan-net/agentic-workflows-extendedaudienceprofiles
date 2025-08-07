@@ -26,7 +26,7 @@ class MasumiClient:
         Args:
             config_path: Path to masumi.yaml configuration
         """
-        script_dir = Path(__file__).parent
+        script_dir = Path(__file__).parent.parent
         self.config_path = str(script_dir / config_path)
         # self.config_path = config_path
         self.budget_config = {}
