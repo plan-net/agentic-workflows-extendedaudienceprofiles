@@ -28,7 +28,7 @@ class MasumiClient:
         """
         script_dir = Path(__file__).parent
         self.config_path = str(script_dir / config_path)
-        self.config_path = config_path
+        # self.config_path = config_path
         self.budget_config = {}
         self.agents_config = []
         self.masumi_sdk_config = None
