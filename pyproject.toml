@@ -17,6 +17,9 @@ dependencies = [
     "openai-agents>=0.1.0",
     "aiofiles>=24.1.0",
     "tiktoken>=0.5.0",
+    "langfuse==2.60.5",
+    "pydantic-ai[logfire]",
+    "nest_asyncio",
 ]
 
 [tool.setuptools]

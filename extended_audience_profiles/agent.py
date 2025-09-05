@@ -4,6 +4,7 @@ Business logic for Extended Audience Profiles using OpenAI Agents and Masumi Net
 import asyncio
 import logging
 import time
+import os
 from typing import Dict, Any, List, Optional
 from agents import Agent, Runner
 from .tools import list_available_agents, get_agent_input_schema, execute_agent_job
@@ -14,8 +15,13 @@ from .masumi import MasumiClient
 from .formatting import format_research_results, format_results_for_refinement, display_token_analysis
 from .errors import handle_job_submission_error, create_error_response, create_success_response
 from .exceptions import JobNotFoundError, StorageError
+from .tracing import setup_langfuse_tracing
+from .tracer_tool import TracerTool
 
 logger = logging.getLogger(__name__)
+
+# Initialize tracing
+setup_langfuse_tracing()
 
 # Load prompts from files
 def load_prompt(filename: str) -> str:
@@ -40,7 +46,95 @@ def load_prompt(filename: str) -> str:
         return f.read().strip()
 
 
-# Phase 1: Orchestrator agent that submits jobs to Masumi agents
+def create_agents_with_langfuse(label: str = "production", tracer=None):
+    """
+    Create agents using Langfuse prompts if enabled.
+    
+    Args:
+        label: Langfuse label to use
+        tracer: Optional tracer for transparency
+        
+    Returns:
+        Tuple of (orchestrator, refinement, consolidator) agents
+    """
+    use_langfuse = os.getenv("USE_LANGFUSE_PROMPTS", "false").lower() == "true"
+    
+    # Create tracer tools if tracer is available
+    tracer_tools = []
+    if tracer:
+        tracer_tool = TracerTool(tracer).create_tool()
+        tracer_tools.append(tracer_tool)
+        logger.info("TracerTool enabled for agent reasoning transparency")
+    
+    # Define tools for each agent
+    orchestrator_tools = [list_available_agents, get_agent_input_schema, execute_agent_job] + tracer_tools
+    refinement_tools = [list_available_agents, get_agent_input_schema, execute_agent_job] + tracer_tools
+    consolidator_tools = tracer_tools  # Consolidator doesn't need masumi tools
+    
+    if use_langfuse:
+        logger.info(f"Creating agents with Langfuse prompts (label: {label})")
+        try:
+            from .langfuse_prompt_manager import ExtendedAudienceProfilesPromptManager
+            
+            manager = ExtendedAudienceProfilesPromptManager()
+            
+            # Create agents with Langfuse prompts
+            orchestrator = manager.create_dynamic_agent_with_langfuse_prompt(
+                "orchestrator",
+                orchestrator_tools,
+                label
+            )
+            
+            refinement = manager.create_dynamic_agent_with_langfuse_prompt(
+                "refinement", 
+                refinement_tools,
+                label
+            )
+            
+            consolidator = manager.create_dynamic_agent_with_langfuse_prompt(
+                "consolidator",
+                consolidator_tools,
+                label
+            )
+            
+            if orchestrator and refinement and consolidator:
+                logger.info("Successfully created agents with Langfuse prompts")
+                return orchestrator, refinement, consolidator
+            else:
+                logger.warning("Failed to create some agents with Langfuse, falling back to local prompts")
+                
+        except Exception as e:
+            logger.error(f"Failed to create agents with Langfuse: {e}")
+            logger.warning("Falling back to local prompts")
+    
+    # Fallback to local prompts
+    logger.info("Creating agents with local prompts")
+    
+    orchestrator = Agent(
+        name="audience-profile-orchestrator",
+        instructions=load_prompt("orchestrator.txt"),
+        model="gpt-4.1",
+        tools=orchestrator_tools
+    )
+    
+    refinement = Agent(
+        name="audience-profile-refinement",
+        instructions=load_prompt("refinement.txt"),
+        model="gpt-4.1",
+        tools=refinement_tools
+    )
+    
+    consolidator = Agent(
+        name="audience-profile-consolidator",
+        instructions=load_prompt("consolidator.txt"),
+        model="gpt-4.1",
+        tools=consolidator_tools
+    )
+    
+    return orchestrator, refinement, consolidator
+
+
+# Legacy static agents for backwards compatibility
 orchestrator_agent = Agent(
     name="audience-profile-orchestrator",
     instructions=load_prompt("orchestrator.txt"),
@@ -48,7 +142,6 @@ orchestrator_agent = Agent(
     tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
 )
 
-# Phase 3: Refinement agent that analyzes initial results and plans deeper research
 refinement_agent = Agent(
     name="audience-profile-refinement",
     instructions=load_prompt("refinement.txt"),
@@ -56,12 +149,11 @@ refinement_agent = Agent(
     tools=[list_available_agents, get_agent_input_schema, execute_agent_job]
 )
 
-# Phase 5: Consolidator agent that processes all results
 consolidator_agent = Agent(
     name="audience-profile-consolidator",
     instructions=load_prompt("consolidator.txt"),
     model="gpt-4.1",
-    tools=[]  # Consolidator doesn't need tools - just processes provided data
+    tools=[]
 )
 
 
@@ -81,6 +173,14 @@ async def generate_audience_profile(audience_description: str, tracer=None) -> D
     """
     try:
         logger.info(f"Starting audience profile generation for: {audience_description}")
+        
+        # Get label from environment or use default
+        PROMPT_LABEL = os.getenv("LANGFUSE_ENV", "production")
+        
+        # Create agents dynamically (with Langfuse support if enabled)
+        orchestrator_agent, refinement_agent, consolidator_agent = create_agents_with_langfuse(
+            PROMPT_LABEL, tracer
+        )
         
         from .masumi import MasumiClient
         client = MasumiClient()
